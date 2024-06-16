@@ -11,8 +11,8 @@ jobs:
     strategy:
       matrix:
         lib: [Shared, Static]
-        config: [Release, Debug]
-        abi: [x86_64, armeabi-v7a]
+        config: [Release]
+        abi: [arm64-v8a]
       fail-fast: false
     
     runs-on: ubuntu-latest
