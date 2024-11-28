@@ -122,10 +122,59 @@ void GLPipelineState::BuildUniformMap(GLShader::Permutation permutation, const s
     {
         const GLuint program = shaderPipelines_[permutation]->GetID();
 
+        /* Build name-to-index map of all active uniforms, since glGetUniformLocation() does *not* map to the active uniform index */
+        GLNameToUniformMap nameToUniformMap;
+        BuildNameToActiveUniformMap(program, nameToUniformMap);
+
         /* Build uniform locations from input descriptors */
         uniformMap_.resize(uniforms.size());
         for_range(i, uniforms.size())
-            BuildUniformLocation(program, uniformMap_[i], uniforms[i]);
+            BuildUniformLocation(program, uniformMap_[i], uniforms[i], nameToUniformMap);
+    }
+}
+
+/*
+Returns the name of an active GL uniform as an identifier, i.e. removing any subscripts.
+Arrays of uniforms are reflected with a subscript for the first entry,
+e.g. "uniform inputTextures[2];" yields the active uniform name "inputTextures[0]".
+This functions removes the subscript, effecitvely returning "inputTextures" for this example.
+*/
+static std::string GetActiveUniformNameAsIdent(const GLchar* uniformName)
+{
+    std::string ident{ uniformName };
+    const std::size_t subscriptStartPos = ident.find('[');
+    if (subscriptStartPos != std::string::npos)
+        return ident.substr(0, subscriptStartPos);
+    return ident;
+}
+
+void GLPipelineState::BuildNameToActiveUniformMap(GLuint program, GLNameToUniformMap& outNameToUniformMap)
+{
+    /* Determine number of active GL uniforms */
+    GLint numActiveUniforms = 0;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &numActiveUniforms);
+    if (numActiveUniforms <= 0)
+        return;
+
+    /* Determine buffer size for largest GL uniform name */
+    GLint maxUniformNameLength = 0;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maxUniformNameLength);
+    if (maxUniformNameLength <= 0)
+        return;
+
+    /* Reserve memory to iterate over all active GL uniforms */
+    std::vector<GLchar> uniformName;
+    uniformName.resize(maxUniformNameLength, '\0');
+
+    outNameToUniformMap.reserve(static_cast<std::size_t>(numActiveUniforms));
+
+    /* Build name-to-index map for all active GL uniforms */
+    for_range(i, static_cast<GLuint>(numActiveUniforms))
+    {
+        GLActiveUniform uniform = {};
+        glGetActiveUniform(program, i, static_cast<GLsizei>(uniformName.size()), nullptr, &uniform.size, &uniform.type, &uniformName[0]);
+        const std::string uniformIdent = GetActiveUniformNameAsIdent(uniformName.data());
+        outNameToUniformMap[uniformIdent] = uniform;
     }
 }
 
@@ -139,7 +188,7 @@ static GLuint GetUniformWordSize(GLenum type)
         case GL_FLOAT_VEC2:         return 2;
         case GL_FLOAT_VEC3:         return 3;
         case GL_FLOAT_VEC4:         return 4;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
         case GL_DOUBLE:             return 1*2;
         case GL_DOUBLE_VEC2:        return 2*2;
         case GL_DOUBLE_VEC3:        return 3*2;
@@ -150,9 +199,11 @@ static GLuint GetUniformWordSize(GLenum type)
         case GL_INT_VEC3:           return 3;
         case GL_INT_VEC4:           return 4;
         case GL_UNSIGNED_INT:       return 1;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_UNSIGNED_INT_VEC2:  return 2;
         case GL_UNSIGNED_INT_VEC3:  return 3;
         case GL_UNSIGNED_INT_VEC4:  return 4;
+        #endif
         case GL_BOOL:               return 1;
         case GL_BOOL_VEC2:          return 2;
         case GL_BOOL_VEC3:          return 3;
@@ -168,7 +219,7 @@ static GLuint GetUniformWordSize(GLenum type)
         case GL_FLOAT_MAT4x2:       return 4*2;
         case GL_FLOAT_MAT4x3:       return 4*3;
         case GL_FLOAT_MAT4:         return 4*4;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
         case GL_DOUBLE_MAT2:        return 2*2*2;
         case GL_DOUBLE_MAT2x3:      return 2*3*2;
         case GL_DOUBLE_MAT2x4:      return 2*4*2;
@@ -184,31 +235,33 @@ static GLuint GetUniformWordSize(GLenum type)
     }
 }
 
-void GLPipelineState::BuildUniformLocation(GLuint program, GLUniformLocation& outUniform, const UniformDescriptor& inUniform)
+void GLPipelineState::BuildUniformLocation(
+    GLuint                      program,
+    GLUniformLocation&          outUniform,
+    const UniformDescriptor&    inUniform,
+    const GLNameToUniformMap&   nameToUniformMap)
 {
+    /* Initialize output with invalid uniform location */
+    outUniform.type     = UniformType::Undefined;
+    outUniform.location = -1;
+    outUniform.count    = 0;
+    outUniform.wordSize = 0;
+
     /* Find uniform location by name in shader pipeline */
     GLint location = glGetUniformLocation(program, inUniform.name.c_str());
     if (location == -1)
-    {
-        /* Write invalid uniform location */
-        outUniform.type     = UniformType::Undefined;
-        outUniform.location = -1;
-        outUniform.count    = 0;
-        outUniform.wordSize = 0;
-    }
-    else
-    {
-        /* Determine type of uniform */
-        GLenum type = 0;
-        GLint size = 0;
-        glGetActiveUniform(program, static_cast<GLuint>(location), 0, nullptr, &size, &type, nullptr);
+        return;
 
-        /* Write output uniform */
-        outUniform.type     = GLTypes::UnmapUniformType(type);
-        outUniform.location = location;
-        outUniform.count    = size;
-        outUniform.wordSize = GetUniformWordSize(type);
-    }
+    /* Determine type of uniform */
+    auto it = nameToUniformMap.find(inUniform.name);
+    if (it == nameToUniformMap.end())
+        return;
+
+    /* Write output uniform */
+    outUniform.type     = GLTypes::UnmapUniformType(it->second.type);
+    outUniform.location = location;
+    outUniform.count    = it->second.size;
+    outUniform.wordSize = GetUniformWordSize(it->second.type);
 }
 
 

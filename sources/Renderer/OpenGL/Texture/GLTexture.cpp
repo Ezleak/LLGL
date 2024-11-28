@@ -8,11 +8,8 @@
 #include "GLTexture.h"
 #include "GLTextureViewPool.h"
 #include "GLRenderbuffer.h"
-#include "GLReadTextureFBO.h"
 #include "GLMipGenerator.h"
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-#   include "GL2XSampler.h"
-#endif
+#include "GLEmulatedSampler.h"
 #include "../GLTypes.h"
 #include "../GLCore.h"
 #include "../GLObjectUtils.h"
@@ -66,6 +63,9 @@ static bool IsRenderbufferSufficient(const TextureDescriptor& desc)
 // Maps the specified format to a swizzle format, or identity swizzle if texture swizzling is not necessary
 static GLSwizzleFormat MapToGLSwizzleFormat(const Format format)
 {
+    #ifdef LLGL_WEBGL
+    return GLSwizzleFormat::RGBA; // WebGL does not support texture swizzling
+    #else
     const auto& formatDesc = GetFormatAttribs(format);
     if (formatDesc.format == ImageFormat::Alpha)
         return GLSwizzleFormat::Alpha;
@@ -73,6 +73,7 @@ static GLSwizzleFormat MapToGLSwizzleFormat(const Format format)
         return GLSwizzleFormat::BGRA;
     else
         return GLSwizzleFormat::RGBA;
+    #endif
 }
 
 GLTexture::GLTexture(const TextureDescriptor& desc) :
@@ -83,14 +84,14 @@ GLTexture::GLTexture(const TextureDescriptor& desc) :
 {
     if (IsRenderbuffer())
     {
-        #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
         if (HasExtension(GLExt::ARB_direct_state_access))
         {
             /* Create new GL renderbuffer object */
             glCreateRenderbuffers(1, &id_);
         }
         else
-        #endif
+        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
         {
             /* Create new GL renderbuffer object (must be bound to a target before it can be used) */
             glGenRenderbuffers(1, &id_);
@@ -98,21 +99,21 @@ GLTexture::GLTexture(const TextureDescriptor& desc) :
     }
     else
     {
-        #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
         if (HasExtension(GLExt::ARB_direct_state_access))
         {
             /* Create new GL texture object with respective target */
             glCreateTextures(GetGLTexTarget(), 1, &id_);
         }
         else
-        #endif
+        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
         {
             /* Create new GL texture object (must be bound to a target before it can be used) */
             glGenTextures(1, &id_);
         }
     }
 
-    #ifdef LLGL_OPENGLES3
+    #if !LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
     /* Store additional parameters for GLES */
     extent_[0]  = static_cast<GLint>(desc.extent.width);
     extent_[1]  = static_cast<GLint>(desc.extent.height);
@@ -306,6 +307,8 @@ void GLTexture::BindAndAllocStorage(const TextureDescriptor& textureDesc, const 
         AllocTextureStorage(textureDesc, initialImage);
 }
 
+#if !LLGL_WEBGL
+
 static TextureSwizzle GetTextureSwizzlePermutationBGRAComponent(const TextureSwizzle swizzleComponent)
 {
     switch (swizzleComponent)
@@ -354,10 +357,14 @@ static TextureSwizzleRGBA GetTextureSwizzlePermutationAlpha(const TextureSwizzle
 
 static void InitializeGLTextureSwizzle(GLenum target, const TextureSwizzleRGBA& swizzle)
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
     glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, GLTypes::Map(swizzle.r));
     glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, GLTypes::Map(swizzle.g));
     glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, GLTypes::Map(swizzle.b));
     glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, GLTypes::Map(swizzle.a));
+    #else
+    LLGL_ASSERT(IsTextureSwizzleIdentity(swizzle), "texture component swizzling not supported in GL 2.x");
+    #endif
 }
 
 static void InitializeGLTextureSwizzleWithFormat(
@@ -388,13 +395,17 @@ static void InitializeGLTextureSwizzleWithFormat(
     }
 }
 
+#endif // !LLGL_WEBGL
+
 void GLTexture::TexParameterSwizzle(
     const TextureType           type,
     const Format                format,
     const TextureSwizzleRGBA&   swizzle,
     bool                        ignoreIdentitySwizzle)
 {
+    #if !LLGL_WEBGL
     InitializeGLTextureSwizzleWithFormat(type, MapToGLSwizzleFormat(format), swizzle, ignoreIdentitySwizzle);
+    #endif
 }
 
 #ifdef GL_ARB_copy_image
@@ -441,30 +452,48 @@ static void GLCopyImageSubData(
 
 #endif // /GL_ARB_copy_image
 
+static GLenum GetGLAttachmentForInternalFormat(GLenum internalFormat)
+{
+    if (GLTypes::IsDepthFormat(internalFormat))
+        return GL_DEPTH_ATTACHMENT;
+    if (GLTypes::IsDepthStencilFormat(internalFormat))
+        return GL_DEPTH_STENCIL_ATTACHMENT;
+    return GL_COLOR_ATTACHMENT0;
+}
+
+static void ReadFramebufferAttachTexture(const GLTexture& texture, GLint mipLevel, GLint arrayLayer = 0)
+{
+    const GLenum attachment = GetGLAttachmentForInternalFormat(texture.GetGLInternalFormat());
+    GLFramebuffer::AttachTexture(texture, attachment, static_cast<GLint>(mipLevel), arrayLayer, GL_READ_FRAMEBUFFER);
+}
+
 // Copies image data from a source texture to a destination texture.
 static void GLCopyTexSubImagePrimary(
-    const TextureType       type,
-    const GLTextureTarget   target,
+    const TextureType       textureType,
     GLuint                  dstTextureID,
     GLint                   dstLevel,
     const Offset3D&         dstOffset,
     GLTexture&              srcTexture,
     GLint                   srcLevel,
-    Offset3D                srcOffset,
+    const Offset3D&         srcOffset,
     const Extent3D&         extent)
 {
-    const GLenum targetGL = GLTypes::Map(type);
+    const GLTextureTarget target = GLStateManager::GetTextureTarget(textureType);
+    const GLenum targetGL = GLTypes::Map(textureType);
 
     /* Create temporary FBO for source texture to read from GL_READ_FRAMEBUFFER in copy texture operator */
-    GLReadTextureFBO readFBO;
+    GLFramebuffer readFBO;
+    readFBO.GenFramebuffer();
+
+    GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::ReadFramebuffer, readFBO.GetID());
     GLStateManager::Get().BindTexture(target, dstTextureID);
 
-    switch (type)
+    switch (textureType)
     {
         case TextureType::Texture1D:
         {
             #ifdef LLGL_OPENGL
-            readFBO.Attach(srcTexture, srcLevel, srcOffset);
+            ReadFramebufferAttachTexture(srcTexture, srcLevel);
             glCopyTexSubImage1D(
                 targetGL,
                 dstLevel,
@@ -481,7 +510,7 @@ static void GLCopyTexSubImagePrimary(
         {
             for_range(y, extent.height)
             {
-                readFBO.Attach(srcTexture, srcLevel, srcOffset);
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.y + y);
                 glCopyTexSubImage2D(
                     targetGL,
                     dstLevel,
@@ -492,7 +521,6 @@ static void GLCopyTexSubImagePrimary(
                     static_cast<GLsizei>(extent.width),
                     1 // height
                 );
-                srcOffset.y++;
             }
         }
         break;
@@ -500,7 +528,7 @@ static void GLCopyTexSubImagePrimary(
         case TextureType::Texture2D:
         case TextureType::Texture2DMS:
         {
-            readFBO.Attach(srcTexture, srcLevel, srcOffset);
+            ReadFramebufferAttachTexture(srcTexture, srcLevel);
             glCopyTexSubImage2D(
                 targetGL,
                 dstLevel,
@@ -518,7 +546,7 @@ static void GLCopyTexSubImagePrimary(
         {
             for_range(z, extent.depth)
             {
-                readFBO.Attach(srcTexture, srcLevel, srcOffset);
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.z + z);
                 glCopyTexSubImage2D(
                     GLTypes::ToTextureCubeMap(dstOffset.z + z),
                     dstLevel,
@@ -529,7 +557,6 @@ static void GLCopyTexSubImagePrimary(
                     static_cast<GLsizei>(extent.width),
                     static_cast<GLsizei>(extent.height)
                 );
-                srcOffset.z++;
             }
         }
         break;
@@ -541,7 +568,7 @@ static void GLCopyTexSubImagePrimary(
         {
             for_range(z, extent.depth)
             {
-                readFBO.Attach(srcTexture, srcLevel, srcOffset);
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.z + z);
                 glCopyTexSubImage3D(
                     targetGL,
                     dstLevel,
@@ -553,7 +580,128 @@ static void GLCopyTexSubImagePrimary(
                     static_cast<GLsizei>(extent.width),
                     static_cast<GLsizei>(extent.height)
                 );
-                srcOffset.z++;
+            }
+        }
+        break;
+    }
+}
+
+static void GLReadPixelsFromTexture(
+    const MutableImageView& dstImageView,
+    GLTexture&              srcTexture,
+    GLint                   srcLevel,
+    const Offset3D&         srcOffset,
+    const Extent3D&         extent)
+{
+    const TextureType       textureType = srcTexture.GetType();
+    const GLTextureTarget   target      = GLStateManager::GetTextureTarget(textureType);
+
+    const GLenum targetGL   = GLTypes::Map(textureType);
+    const GLenum formatGL   = GLTypes::Map(dstImageView.format);
+    const GLenum dataTypeGL = GLTypes::Map(dstImageView.dataType);
+
+    char* dstImageData = reinterpret_cast<char*>(dstImageView.data);
+
+    /* Create temporary FBO for source texture to read from GL_READ_FRAMEBUFFER in read pixel operator */
+    GLFramebuffer readFBO;
+    readFBO.GenFramebuffer();
+
+    GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::ReadFramebuffer, readFBO.GetID());
+
+    switch (textureType)
+    {
+        case TextureType::Texture1D:
+        {
+            #ifdef LLGL_OPENGL
+            ReadFramebufferAttachTexture(srcTexture, srcLevel);
+            glReadPixels(
+                srcOffset.x,
+                0,
+                static_cast<GLsizei>(extent.width),
+                1,
+                formatGL,
+                dataTypeGL,
+                dstImageData
+            );
+            #endif
+        }
+        break;
+
+        case TextureType::Texture1DArray:
+        {
+            const std::size_t imageLayerStride = dstImageView.dataSize / extent.height; //TODO: calcualte required size independently of input 'dataSize'
+            for_range(y, extent.height)
+            {
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.y + y);
+                glReadPixels(
+                    srcOffset.x,
+                    0,
+                    static_cast<GLsizei>(extent.width),
+                    1,
+                    formatGL,
+                    dataTypeGL,
+                    dstImageData
+                );
+                dstImageData += imageLayerStride;
+            }
+        }
+        break;
+
+        case TextureType::Texture2D:
+        case TextureType::Texture2DMS:
+        {
+            ReadFramebufferAttachTexture(srcTexture, srcLevel);
+            glReadPixels(
+                srcOffset.x,
+                srcOffset.y,
+                static_cast<GLsizei>(extent.width),
+                static_cast<GLsizei>(extent.height),
+                formatGL,
+                dataTypeGL,
+                dstImageData
+            );
+        }
+        break;
+
+        case TextureType::TextureCube:
+        {
+            const std::size_t imageLayerStride = dstImageView.dataSize / extent.depth; //TODO: calcualte required size independently of input 'dataSize'
+            for_range(z, extent.depth)
+            {
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.z + z);
+                glReadPixels(
+                    srcOffset.x,
+                    srcOffset.y,
+                    static_cast<GLsizei>(extent.width),
+                    static_cast<GLsizei>(extent.height),
+                    formatGL,
+                    dataTypeGL,
+                    dstImageData
+                );
+                dstImageData += imageLayerStride;
+            }
+        }
+        break;
+
+        case TextureType::Texture3D:
+        case TextureType::Texture2DArray:
+        case TextureType::Texture2DMSArray:
+        case TextureType::TextureCubeArray:
+        {
+            const std::size_t imageLayerStride = dstImageView.dataSize / extent.depth; //TODO: calcualte required size independently of input 'dataSize'
+            for_range(z, extent.depth)
+            {
+                ReadFramebufferAttachTexture(srcTexture, srcLevel, srcOffset.z + z);
+                glReadPixels(
+                    srcOffset.x,
+                    srcOffset.y,
+                    static_cast<GLsizei>(extent.width),
+                    static_cast<GLsizei>(extent.height),
+                    formatGL,
+                    dataTypeGL,
+                    dstImageData
+                );
+                dstImageData += imageLayerStride;
             }
         }
         break;
@@ -578,7 +726,6 @@ static void GLCopyTexSubImage(
     {
         GLCopyTexSubImagePrimary(
             type,
-            target,
             dstTexture.GetID(),
             dstLevel,
             dstOffset,
@@ -628,6 +775,7 @@ void GLTexture::CopyImageToBuffer(
 {
     /* Get image format and data type from internal texture format */
     const auto& formatAttribs = GetFormatAttribs(GetFormat());
+    LLGL_ASSERT(formatAttribs.dataType != DataType::Undefined, "failed to map GL internal texture format (0x%04X)", GetGLInternalFormat());
 
     /* Read data from unpack buffer with byte offset and equal texture format */
     const MutableImageView dstImageView
@@ -690,14 +838,14 @@ void GLTexture::TextureSubImage(const TextureRegion& region, const ImageView& sr
 {
     if (!IsRenderbuffer())
     {
-        #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
         if (HasExtension(GLExt::ARB_direct_state_access))
         {
             /* Transfer image data directly to GL texture */
             GLTextureSubImage(GetID(), GetType(), region, srcImageView, GetGLInternalFormat());
         }
         else
-        #endif
+        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
         {
             const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
             if (restoreBoundTexture)
@@ -720,7 +868,7 @@ void GLTexture::TextureSubImage(const TextureRegion& region, const ImageView& sr
     }
 }
 
-#ifdef GL_ARB_get_texture_sub_image
+#if LLGL_GLEXT_GET_TEXTURE_SUB_IMAGE
 
 static void GLGetTextureSubImage(
     GLTexture&                  textureGL,
@@ -750,48 +898,104 @@ static void GLGetTextureSubImage(
     );
 }
 
-#endif // /GL_ARB_get_texture_sub_image
+#endif // /LLGL_GLEXT_GET_TEXTURE_SUB_IMAGE
 
-#ifdef LLGL_OPENGL
+#if LLGL_OPENGL
 
 // Forwards the call to glGetTexImage() and converts the output data if necessary
 static void GLGetTexImage(
-    TextureType type,
-    GLint       mipLevel,
-    ImageFormat format,
-    DataType    dataType,
-    void*       data,
-    std::size_t numTexels)
+    GLTextureTarget         target,
+    GLuint                  textureID,
+    GLenum                  internalFormat,
+    GLint                   mipLevel,
+    const MutableImageView& dstImageView,
+    std::size_t             numTexels)
 {
-    if (format == ImageFormat::Stencil && GLGetVersion() < 440)
-    {
-        /* GL_STENCIL_INDEX can only be passed into glGetTexImage in GL 4.4+, so read GL_DEPTH_STENCIL and separate stencil manually */
-        std::unique_ptr<GLDepthStencilPair[]> dsImageData = MakeUniqueArray<GLDepthStencilPair>(numTexels);
+    const GLenum targetGL = GLStateManager::ToGLTextureTarget(target);
 
-        glGetTexImage(
-            GLTypes::Map(type),
-            mipLevel,
-            GL_DEPTH_STENCIL,
-            GL_FLOAT_32_UNSIGNED_INT_24_8_REV,
-            dsImageData.get()
-        );
+    GLStateManager::Get().BindTexture(target, textureID);
+
+    if (dstImageView.format == ImageFormat::Stencil && GLGetVersion() < 440)
+    {
+        #if !LLGL_GL_ENABLE_OPENGL2X
+
+        /* GL_STENCIL_INDEX can only be passed into glGetTexImage in GL 4.4+, so read GL_DEPTH_STENCIL and separate stencil manually */
+        std::unique_ptr<GLDepthStencilPair[]> intermediateDSData = MakeUniqueArray<GLDepthStencilPair>(numTexels);
+
+        if (target == GLTextureTarget::TextureCubeMap)
+        {
+            /* Only glGetTextureImage() accepts the generic GL_TEXTURE_CUBE_MAP target, so query each cube face individually when using glTexImage() */
+            const std::size_t cubeFacePixelStride = (sizeof(GLDepthStencilPair) * numTexels) / 6; //TODO: calculate required stride independently of input 'numTexels'
+            char* dstImageData = reinterpret_cast<char*>(intermediateDSData.get());
+            for_range(cubeFaceIndex, 6)
+            {
+                GLenum cubeFaceTargetGL = GLTypes::ToTextureCubeMap(cubeFaceIndex);
+                glGetTexImage(
+                    cubeFaceTargetGL,
+                    mipLevel,
+                    GL_DEPTH_STENCIL,
+                    GL_FLOAT_32_UNSIGNED_INT_24_8_REV,
+                    dstImageData
+                );
+                dstImageData += cubeFacePixelStride;
+            }
+        }
+        else
+        {
+            glGetTexImage(
+                targetGL,
+                mipLevel,
+                GL_DEPTH_STENCIL,
+                GL_FLOAT_32_UNSIGNED_INT_24_8_REV,
+                intermediateDSData.get()
+            );
+        }
 
         /* Copy stencil values into output buffer */
-        std::uint8_t* dst = reinterpret_cast<std::uint8_t*>(data);
+        std::uint8_t* dst = reinterpret_cast<std::uint8_t*>(dstImageView.data);
         for_range(i, numTexels)
-            dst[i] = dsImageData[i].stencil;
+            dst[i] = intermediateDSData[i].stencil;
+
+        #else // !LLGL_GL_ENABLE_OPENGL2X
+
+        LLGL_TRAP_FEATURE_NOT_SUPPORTED("read stencil from texture in GL 2.x");
+
+        #endif // /!LLGL_GL_ENABLE_OPENGL2X
     }
     else
     {
-        glGetTexImage(
-            GLTypes::Map(type),
-            mipLevel,
-            GLTypes::Map(format, IsIntDataType(dataType)),
-            GLTypes::Map(dataType),
-            data
-        );
+        if (target == GLTextureTarget::TextureCubeMap)
+        {
+            /* Only glGetTextureImage() accepts the generic GL_TEXTURE_CUBE_MAP target, so query each cube face individually when using glTexImage() */
+            const std::size_t cubeFacePixelStride = dstImageView.dataSize / 6; //TODO: calculate required stride independently of input 'dataSize'
+            char* dstImageData = reinterpret_cast<char*>(dstImageView.data);
+            for_range(cubeFaceIndex, 6)
+            {
+                GLenum cubeFaceTargetGL = GLTypes::ToTextureCubeMap(cubeFaceIndex);
+                glGetTexImage(
+                    cubeFaceTargetGL,
+                    mipLevel,
+                    GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                    GLTypes::Map(dstImageView.dataType),
+                    dstImageData
+                );
+                dstImageData += cubeFacePixelStride;
+            }
+        }
+        else
+        {
+            glGetTexImage(
+                targetGL,
+                mipLevel,
+                GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                GLTypes::Map(dstImageView.dataType),
+                dstImageView.data
+            );
+        }
     }
 }
+
+#endif // /LLGL_OPENGL
 
 static void GLGetTextureImage(
     GLTexture&                  textureGL,
@@ -804,6 +1008,8 @@ static void GLGetTextureImage(
     /* Translate source region into actual texture dimensions */
     const Offset3D offset = CalcTextureOffset(type, region.offset, region.subresource.baseArrayLayer);
     const Extent3D extent = CalcTextureExtent(type, region.extent, region.subresource.numArrayLayers);
+
+    #if LLGL_OPENGL // Use glGetTexImage() for desktop GL
 
     /* Check if source region must be copied into a staging texture */
     const GLint         mipLevel    = static_cast<GLint>(region.subresource.baseMipLevel);
@@ -843,7 +1049,6 @@ static void GLGetTextureImage(
         {
             GLCopyTexSubImagePrimary(
                 stagingTextureType,
-                stagingTextureTarget,
                 stagingTextureID,
                 0,
                 Offset3D{ 0, 0, 0 },
@@ -856,7 +1061,7 @@ static void GLGetTextureImage(
         GLStateManager::Get().PopBoundFramebuffer();
 
         /* Use staging texture as source for copy operation, so also reset source MIP-map level */
-        #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
         if (HasExtension(GLExt::ARB_direct_state_access))
         {
             glGetTextureImage(
@@ -869,11 +1074,10 @@ static void GLGetTextureImage(
             );
         }
         else
-        #endif // /GL_ARB_direct_state_access
+        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
         {
             /* Bind texture and read image data from texture */
-            GLStateManager::Get().BindTexture(stagingTextureTarget, stagingTextureID);
-            GLGetTexImage(stagingTextureType, 0, dstImageView.format, dstImageView.dataType, dstImageView.data, numTexels);
+            GLGetTexImage(stagingTextureTarget, stagingTextureID, textureGL.GetGLInternalFormat(), 0, dstImageView, numTexels);
         }
 
         /* Delete temporary staging texture */
@@ -884,7 +1088,7 @@ static void GLGetTextureImage(
         /* Use input texture as source for copy operation */
         const GLuint srcTextureID = textureGL.GetID();
 
-        #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
         if (HasExtension(GLExt::ARB_direct_state_access))
         {
             glGetTextureImage(
@@ -897,32 +1101,34 @@ static void GLGetTextureImage(
             );
         }
         else
-        #endif // /GL_ARB_direct_state_access
+        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
         {
             /* Bind texture and read image data from texture */
             const GLTextureTarget srcTextureTarget = GLStateManager::GetTextureTarget(type);
-            GLStateManager::Get().BindTexture(srcTextureTarget, srcTextureID);
-            GLGetTexImage(type, mipLevel, dstImageView.format, dstImageView.dataType, dstImageView.data, numTexels);
+            GLGetTexImage(GLStateManager::GetTextureTarget(type), srcTextureID, textureGL.GetGLInternalFormat(), mipLevel, dstImageView, numTexels);
         }
     }
-}
 
-#endif // /LLGL_OPENGL
+    #else // Use glReadPixels() for GLES/WebGL
+
+    /* Read pixels from source texture via intermediate read-FBO */
+    GLReadPixelsFromTexture(dstImageView, textureGL, static_cast<GLint>(region.subresource.baseMipLevel), offset, extent);
+
+    #endif // /LLGL_OPEGNL
+}
 
 void GLTexture::GetTextureSubImage(const TextureRegion& region, const MutableImageView& dstImageView, bool restoreBoundTexture)
 {
     if (!IsRenderbuffer())
     {
-        #ifdef LLGL_OPENGL
-
-        #ifdef GL_ARB_get_texture_sub_image
+        #if LLGL_GLEXT_GET_TEXTURE_SUB_IMAGE
         if (HasExtension(GLExt::ARB_get_texture_sub_image))
         {
             /* Use native function to retrieve sub image data */
             GLGetTextureSubImage(*this, region, dstImageView);
         }
         else
-        #endif // /GL_ARB_get_texture_sub_image
+        #endif // /LLGL_GLEXT_GET_TEXTURE_SUB_IMAGE
         {
             /* Emulate functionality by copying the entire texture image into an intermediate buffer */
             const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
@@ -938,13 +1144,6 @@ void GLTexture::GetTextureSubImage(const TextureRegion& region, const MutableIma
             else
                 GLGetTextureImage(*this, region, dstImageView);
         }
-
-        #else
-
-        //TODO: copy texture to unpack buffer, then map buffer range to CPU memory
-        LLGL_TRAP_NOT_IMPLEMENTED();
-
-        #endif // /LLGL_OPENGL
     }
 }
 
@@ -958,18 +1157,14 @@ GLenum GLTexture::GetGLTexLevelTarget() const
     return GLGetTextureLevelParamTarget(GetType());
 }
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-
-void GLTexture::BindTexParameters(const GL2XSampler& sampler)
+void GLTexture::BindTexParameters(const GLEmulatedSampler& sampler)
 {
-    if (&sampler != boundSampler_)
+    if (&sampler != boundEmulatedSampler_)
     {
-        sampler.BindTexParameters(GetGLTexTarget(), boundSampler_);
-        boundSampler_ = &sampler;
+        sampler.BindTexParameters(GetGLTexTarget(), boundEmulatedSampler_);
+        boundEmulatedSampler_ = &sampler;
     }
 }
-
-#endif // /LLGL_GL_ENABLE_OPENGL2X
 
 
 /*
@@ -979,7 +1174,7 @@ void GLTexture::BindTexParameters(const GL2XSampler& sampler)
 static GLint GetInitialGlTextureMinFilter(const TextureDescriptor& textureDesc)
 {
     /* Integral texture formats cannot use linear samplers */
-    if (IsIntegralFormat(textureDesc.format))
+    if (IsIntegerFormat(textureDesc.format))
         return (IsMipMappedTexture(textureDesc) ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
     else
         return (IsMipMappedTexture(textureDesc) ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
@@ -988,7 +1183,7 @@ static GLint GetInitialGlTextureMinFilter(const TextureDescriptor& textureDesc)
 static GLint GetInitialGlTextureMagFilter(const TextureDescriptor& textureDesc)
 {
     /* Integral texture formats cannot use linear samplers */
-    return (IsIntegralFormat(textureDesc.format) ? GL_NEAREST : GL_LINEAR);
+    return (IsIntegerFormat(textureDesc.format) ? GL_NEAREST : GL_LINEAR);
 }
 
 static ImageFormat MapSwizzleImageFormat(const ImageFormat format)
@@ -1001,21 +1196,38 @@ static ImageFormat MapSwizzleImageFormat(const ImageFormat format)
     }
 }
 
+// Binds the specified GL texture temporarily. Only used to gather texture information, not to bind texture for the graphics or compute pipeline.
+static void BindGLTextureNonPersistent(const GLTexture& textureGL)
+{
+    GLStateManager::Get().BindTexture(GLStateManager::GetTextureTarget(textureGL.GetType()), textureGL.GetID());
+}
+
+#if LLGL_OPENGL || GL_ES_VERSION_3_1
+
+static GLenum GLGetTextureInternalFormat(const GLTexture& tex)
+{
+    /* Bind texture and query attributes */
+    GLint format = 0;
+    BindGLTextureNonPersistent(tex);
+    glGetTexLevelParameteriv(tex.GetGLTexLevelTarget(), 0, GL_TEXTURE_INTERNAL_FORMAT, &format);
+    return static_cast<GLenum>(format);
+}
+
+#endif
+
+static GLenum GLGetRenderbufferInternalFormat(const GLTexture& tex)
+{
+    /* Bind renderbuffer and query qttributes */
+    GLint format = 0;
+    GLStateManager::Get().BindRenderbuffer(tex.GetID());
+    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &format);
+    return static_cast<GLenum>(format);
+}
+
 void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
     /* Bind texture */
     GLStateManager::Get().BindGLTexture(*this);
-
-    /* Initialize texture parameters for the first time (sampler states not supported for multisample textures) */
-    if (!IsMultiSampleTexture(textureDesc.type))
-    {
-        GLenum target = GLTypes::Map(textureDesc.type);
-        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GetInitialGlTextureMinFilter(textureDesc));
-        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GetInitialGlTextureMagFilter(textureDesc));
-    }
-
-    /* Configure texture swizzling if format is not supported */
-    InitializeGLTextureSwizzleWithFormat(GetType(), swizzleFormat_, {}, true);
 
     /* Convert initial image data for texture swizzle formats */
     ImageView intermediateImageView;
@@ -1031,8 +1243,25 @@ void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const 
     //GLStateManager::Get().BindBuffer(GLBufferTarget::PIXEL_UNPACK_BUFFER, 0);
     GLTexImage(textureDesc, initialImage);
 
-    /* Store internal GL format */
-    internalFormat_ = GetTextureInternalFormat();
+    /* Store internal GL format. Only desktop OpenGL can query the actual internal format. For GLES 3.0 and WebGL 2.0 we have to rely on the input format. */
+    #if LLGL_OPENGL || GL_ES_VERSION_3_1
+    internalFormat_ = GLGetTextureInternalFormat(*this);
+    #else
+    internalFormat_ = GLTypes::Map(textureDesc.format);
+    #endif
+
+    /* Initialize texture parameters for the first time (sampler states not supported for multisample textures) */
+    if (!IsMultiSampleTexture(textureDesc.type))
+    {
+        GLenum target = GLTypes::Map(textureDesc.type);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GetInitialGlTextureMinFilter(textureDesc));
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GetInitialGlTextureMagFilter(textureDesc));
+    }
+
+    /* Configure texture swizzling if format is not supported */
+    #if !LLGL_WEBGL
+    InitializeGLTextureSwizzleWithFormat(GetType(), swizzleFormat_, {}, true);
+    #endif
 
     /* Generate MIP-maps if enabled */
     if (initialImage != nullptr && MustGenerateMipsOnCreate(textureDesc))
@@ -1051,38 +1280,14 @@ void GLTexture::AllocRenderbufferStorage(const TextureDescriptor& textureDesc)
     );
 
     /* Store internal GL format */
-    internalFormat_ = GetRenderbufferInternalFormat();
-}
-
-// Binds the specified GL texture temporarily. Only used to gather texture information, not to bind texture for the graphics or compute pipeline.
-static void BindGLTextureNonPersistent(const GLTexture& textureGL)
-{
-    GLStateManager::Get().BindTexture(GLStateManager::GetTextureTarget(textureGL.GetType()), textureGL.GetID());
-}
-
-GLenum GLTexture::GetTextureInternalFormat() const
-{
-    /* Bind texture and query attributes */
-    GLint format = 0;
-    BindGLTextureNonPersistent(*this);
-    GLProfile::GetTexParameterInternalFormat(GetGLTexLevelTarget(), &format);
-    return static_cast<GLenum>(format);
-}
-
-GLenum GLTexture::GetRenderbufferInternalFormat() const
-{
-    /* Bind renderbuffer and query qttributes */
-    GLint format = 0;
-    GLStateManager::Get().BindRenderbuffer(GetID());
-    glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_INTERNAL_FORMAT, &format);
-    return static_cast<GLenum>(format);
+    internalFormat_ = GLGetRenderbufferInternalFormat(*this);
 }
 
 void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
 {
-    #ifdef LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
+    #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
-    #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+    #if LLGL_GLEXT_DIRECT_STATE_ACCESS
     if (HasExtension(GLExt::ARB_direct_state_access))
     {
         /* Query texture attributes directly using DSA */
@@ -1097,7 +1302,7 @@ void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
             glGetTextureLevelParameteriv(id_, 0, GL_TEXTURE_SAMPLES, samples);
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
         GLStateManager::Get().PushBoundTexture(GLStateManager::GetTextureTarget(GetType()));
@@ -1113,8 +1318,10 @@ void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
                 glGetTexLevelParameteriv(target, 0, GL_TEXTURE_DEPTH,  &extent[2]);
             }
 
+            #if !LLGL_GL_ENABLE_OPENGL2X
             if (samples != nullptr)
                 glGetTexLevelParameteriv(target, 0, GL_TEXTURE_SAMPLES, samples);
+            #endif
         }
         GLStateManager::Get().PopBoundTexture();
     }
@@ -1136,7 +1343,7 @@ void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
 {
-    #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+    #if LLGL_GLEXT_DIRECT_STATE_ACCESS
     if (HasExtension(GLExt::ARB_direct_state_access))
     {
         /* Query texture attributes directly using DSA */
@@ -1151,7 +1358,7 @@ void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
             glGetNamedRenderbufferParameteriv(id_, GL_RENDERBUFFER_SAMPLES, samples);
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
         GLStateManager::Get().PushBoundRenderbuffer();
@@ -1166,8 +1373,10 @@ void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
                 extent[2] = 1;
             }
 
+            #if !LLGL_GL_ENABLE_OPENGL2X
             if (samples != nullptr)
                 glGetRenderbufferParameteriv(id_, GL_RENDERBUFFER_SAMPLES, samples);
+            #endif
         }
         GLStateManager::Get().PopBoundRenderbuffer();
     }
@@ -1175,9 +1384,9 @@ void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
 {
-    #ifdef LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
+    #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
-    #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+    #if LLGL_GLEXT_DIRECT_STATE_ACCESS
     if (HasExtension(GLExt::ARB_direct_state_access))
     {
         /* Query texture attributes directly using DSA */
@@ -1186,7 +1395,7 @@ void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
         glGetTextureLevelParameteriv(id_, level, GL_TEXTURE_DEPTH,  &texSize[2]);
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
         GLStateManager::Get().PushBoundTexture(GLStateManager::GetTextureTarget(GetType()));
@@ -1233,7 +1442,7 @@ void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
 
 void GLTexture::GetRenderbufferSize(GLint (&texSize)[3]) const
 {
-    #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+    #if LLGL_GLEXT_DIRECT_STATE_ACCESS
     if (HasExtension(GLExt::ARB_direct_state_access))
     {
         glGetNamedRenderbufferParameteriv(id_, GL_RENDERBUFFER_WIDTH, &texSize[0]);
@@ -1241,7 +1450,7 @@ void GLTexture::GetRenderbufferSize(GLint (&texSize)[3]) const
         texSize[2] = 1;
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
         GLStateManager::Get().PushBoundRenderbuffer();

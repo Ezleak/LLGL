@@ -38,7 +38,7 @@ struct D3D11ConstantBufferReflection
     std::vector<D3D11ConstantReflection>    fields;
 };
 
-class D3D11Shader final : public Shader
+class D3D11Shader : public Shader
 {
 
     public:
@@ -47,11 +47,11 @@ class D3D11Shader final : public Shader
 
     public:
 
-        void SetDebugName(const char* name) override;
+        void SetDebugName(const char* name) override final;
 
     public:
 
-        D3D11Shader(ID3D11Device* device, const ShaderDescriptor& desc);
+        D3D11Shader(const ShaderType type);
 
         // Returns a list of all reflected constant buffers including their fields.
         HRESULT ReflectAndCacheConstantBuffers(const std::vector<D3D11ConstantBufferReflection>** outConstantBuffers);
@@ -68,12 +68,6 @@ class D3D11Shader final : public Shader
             return byteCode_.Get();
         }
 
-        // Returns the input layout for vertex shaders.
-        inline const ComPtr<ID3D11InputLayout>& GetInputLayout() const
-        {
-            return inputLayout_;
-        }
-
     public:
 
         // Creates a native D3D11 shader from the specified byte code blob.
@@ -83,13 +77,16 @@ class D3D11Shader final : public Shader
             ID3DBlob*               blob,
             std::size_t             numStreamOutputAttribs  = 0,
             const VertexAttribute*  streamOutputAttribs     = nullptr,
+            UINT                    rasterizedStream        = D3D11_SO_NO_RASTERIZED_STREAM,
             ID3D11ClassLinkage*     classLinkage            = nullptr
         );
 
-    private:
+    protected:
 
         bool BuildShader(ID3D11Device* device, const ShaderDescriptor& shaderDesc);
-        void BuildInputLayout(ID3D11Device* device, UINT numVertexAttribs, const VertexAttribute* vertexAttribs);
+        bool BuildProxyGeometryShader(ID3D11Device* device, const ShaderDescriptor& shaderDesc, ComPtr<ID3D11GeometryShader>& outProxyGeomtryShader);
+
+    private:
 
         bool CompileSource(ID3D11Device* device, const ShaderDescriptor& shaderDesc);
         bool LoadBinary(ID3D11Device* device, const ShaderDescriptor& shaderDesc);
@@ -97,8 +94,7 @@ class D3D11Shader final : public Shader
         void CreateNativeShader(
             ID3D11Device*           device,
             std::size_t             numStreamOutputAttribs  = 0,
-            const VertexAttribute*  streamOutputAttribs     = nullptr,
-            ID3D11ClassLinkage*     classLinkage            = nullptr
+            const VertexAttribute*  streamOutputAttribs     = nullptr
         );
 
         HRESULT ReflectShaderByteCode(ShaderReflection& reflection) const;
@@ -111,8 +107,6 @@ class D3D11Shader final : public Shader
 
         ComPtr<ID3DBlob>                            byteCode_;
         Report                                      report_;
-
-        ComPtr<ID3D11InputLayout>                   inputLayout_;
 
         HRESULT                                     cbufferReflectionResult_    = S_FALSE;
         std::vector<D3D11ConstantBufferReflection>  cbufferReflections_;

@@ -28,6 +28,9 @@ namespace LLGL
 {
 
 
+constexpr UINT D3D12SwapChain::maxNumColorBuffers;
+constexpr UINT D3D12SwapChain::numDebugNames;
+
 D3D12SwapChain::D3D12SwapChain(
     D3D12RenderSystem&              renderSystem,
     const SwapChainDescriptor&      desc,
@@ -44,7 +47,7 @@ D3D12SwapChain::D3D12SwapChain(
     commandQueue_ = LLGL_CAST(D3D12CommandQueue*, renderSystem_.GetCommandQueue());
 
     /* Setup surface for the swap-chain */
-    SetOrCreateSurface(surface, desc.resolution, desc.fullscreen, nullptr);
+    SetOrCreateSurface(surface, SwapChain::BuildDefaultSurfaceTitle(renderSystem.GetRendererInfo()), desc.resolution, desc.fullscreen);
 
     /* Create device resources and window dependent resource */
     CreateDescriptorHeaps(renderSystem.GetDevice(), desc.samples);
@@ -55,6 +58,10 @@ D3D12SwapChain::D3D12SwapChain(
 
     if (desc.debugName != nullptr)
         SetDebugName(desc.debugName);
+
+    /* Show default surface */
+    if (!surface)
+        ShowSurface();
 }
 
 D3D12SwapChain::~D3D12SwapChain()
@@ -99,6 +106,11 @@ void D3D12SwapChain::SetDebugName(const char* name)
 
         hasDebugName_ = false;
     }
+}
+
+bool D3D12SwapChain::IsPresentable() const
+{
+    return true; // dummy
 }
 
 void D3D12SwapChain::Present()

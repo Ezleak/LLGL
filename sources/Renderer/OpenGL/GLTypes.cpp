@@ -6,6 +6,7 @@
  */
 
 #include "GLTypes.h"
+#include "Profile/GLProfile.h"
 #include "../../Core/Exception.h"
 
 
@@ -18,20 +19,16 @@ namespace GLTypes
 
 /* ----- Internal functions ----- */
 
-[[noreturn]]
-static void MapFailed(const char* typeName)
-{
-    LLGL_TRAP("failed to map <LLGL::%s> to OpenGL parameter", typeName);
-}
+#define LLGL_TRAP_GL_MAP(TYPE, VALUE) \
+    LLGL_TRAP("failed to map LLGL::%s(%d) to OpenGL parameter", #TYPE, static_cast<int>(VALUE))
 
-[[noreturn]]
-static void UnmapFailed(const char* typeName)
-{
-    LLGL_TRAP("failed to unmap <LLGL::%s> from OpenGL parameter", typeName);
-}
+#define LLGL_TRAP_GL_UNMAP(TYPE, VALUE) \
+    LLGL_TRAP("failed to unmap LLGL::%s from OpenGL parameter (0x%04X)", #TYPE, static_cast<int>(VALUE))
 
 
 /* ----- MapOrZero functions ----- */
+
+#if LLGL_GL_ENABLE_OPENGL2X
 
 GLenum MapOrZero(const Format format)
 {
@@ -40,7 +37,55 @@ GLenum MapOrZero(const Format format)
         case Format::Undefined:         return 0;
 
         /* --- Alpha channel color formats --- */
+        case Format::A8UNorm:           return GL_ALPHA8;
+
+        /* --- Red channel color formats --- */
+        case Format::R8UNorm:           return GL_LUMINANCE8;
+
+        case Format::R16UNorm:          return GL_LUMINANCE16;
+
+        /* --- RG color formats --- */
+        case Format::RG8UNorm:          return GL_LUMINANCE8_ALPHA8;
+
+        case Format::RG16UNorm:         return GL_LUMINANCE16_ALPHA16;
+
+        /* --- RGB color formats --- */
+        case Format::RGB8UNorm:         return GL_RGB8;
+        case Format::RGB8UNorm_sRGB:    return GL_SRGB8;
+
+        case Format::RGB16UNorm:        return GL_RGB16;
+
+        /* --- RGBA color formats --- */
+        case Format::RGBA8UNorm:        return GL_RGBA8;
+        case Format::RGBA8UNorm_sRGB:   return GL_SRGB8_ALPHA8;
+
+        case Format::RGBA16UNorm:       return GL_RGBA16;
+
+        /* --- Packed formats --- */
+        case Format::RGB10A2UNorm:      return GL_RGB10_A2;
+                
+        /* --- Depth-stencil formats --- */
+        case Format::D16UNorm:          return GL_DEPTH_COMPONENT16;
+        case Format::D32Float:          return GL_DEPTH_COMPONENT32;
+
+        default:                        return 0;
+    }
+}
+
+#else // LLGL_GL_ENABLE_OPENGL2X
+
+GLenum MapOrZero(const Format format)
+{
+    switch (format)
+    {
+        case Format::Undefined:         return 0;
+
+        /* --- Alpha channel color formats --- */
+        #ifdef LLGL_WEBGL
+        case Format::A8UNorm:           return GL_ALPHA;
+        #else
         case Format::A8UNorm:           return GL_R8; // texture swizzle
+        #endif
 
         /* --- Red channel color formats --- */
         case Format::R8UNorm:           return GL_R8;
@@ -125,11 +170,13 @@ GLenum MapOrZero(const Format format)
         case Format::RGBA64Float:       return 0;
 
         /* --- BGRA color formats --- */
+        #ifndef LLGL_WEBGL // WebGL does not support texture swizzling
         case Format::BGRA8UNorm:        return GL_RGBA8;        // texture swizzle
         case Format::BGRA8UNorm_sRGB:   return GL_SRGB8_ALPHA8; // texture swizzle
         case Format::BGRA8SNorm:        return GL_RGBA8_SNORM;  // texture swizzle
         case Format::BGRA8UInt:         return GL_RGBA8UI;      // texture swizzle
         case Format::BGRA8SInt:         return GL_RGBA8I;       // texture swizzle
+        #endif
 
         #ifdef LLGL_OPENGL
         /* --- Packed formats --- */
@@ -150,28 +197,101 @@ GLenum MapOrZero(const Format format)
         case Format::D32FloatS8X24UInt: return GL_DEPTH32F_STENCIL8;
 
         /* --- Block compression (BC) formats --- */
-        #ifdef GL_EXT_texture_compression_s3tc
+        #if GL_EXT_texture_compression_s3tc
         case Format::BC1UNorm:          return GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
         case Format::BC2UNorm:          return GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
         case Format::BC3UNorm:          return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
         #endif // /GL_EXT_texture_compression_s3tc
 
-        #ifdef GL_EXT_texture_sRGB
+        #if GL_EXT_texture_sRGB
         case Format::BC1UNorm_sRGB:     return GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
         case Format::BC2UNorm_sRGB:     return GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT;
         case Format::BC3UNorm_sRGB:     return GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
         #endif // /GL_EXT_texture_sRGB
 
-        #ifdef GL_EXT_texture_compression_rgtc
+        #if GL_EXT_texture_compression_rgtc
         case Format::BC4UNorm:          return GL_COMPRESSED_RED_RGTC1_EXT;
         case Format::BC4SNorm:          return GL_COMPRESSED_SIGNED_RED_RGTC1_EXT;
         case Format::BC5UNorm:          return GL_COMPRESSED_RED_GREEN_RGTC2_EXT;
         case Format::BC5SNorm:          return GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;
         #endif // /GL_EXT_texture_compression_rgtc
 
+        /* --- Advanced scalable texture compression (ASTC) formats --- */
+        #if GL_ES_VERSION_3_2
+        case Format::ASTC4x4:           return GL_COMPRESSED_RGBA_ASTC_4x4;
+        case Format::ASTC4x4_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4;
+        case Format::ASTC5x4:           return GL_COMPRESSED_RGBA_ASTC_5x4;
+        case Format::ASTC5x4_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4;
+        case Format::ASTC5x5:           return GL_COMPRESSED_RGBA_ASTC_5x5;
+        case Format::ASTC5x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5;
+        case Format::ASTC6x5:           return GL_COMPRESSED_RGBA_ASTC_6x5;
+        case Format::ASTC6x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5;
+        case Format::ASTC6x6:           return GL_COMPRESSED_RGBA_ASTC_6x6;
+        case Format::ASTC6x6_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6;
+        case Format::ASTC8x5:           return GL_COMPRESSED_RGBA_ASTC_8x5;
+        case Format::ASTC8x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5;
+        case Format::ASTC8x6:           return GL_COMPRESSED_RGBA_ASTC_8x6;
+        case Format::ASTC8x6_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6;
+        case Format::ASTC8x8:           return GL_COMPRESSED_RGBA_ASTC_8x8;
+        case Format::ASTC8x8_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8;
+        case Format::ASTC10x5:          return GL_COMPRESSED_RGBA_ASTC_10x5;
+        case Format::ASTC10x5_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5;
+        case Format::ASTC10x6:          return GL_COMPRESSED_RGBA_ASTC_10x6;
+        case Format::ASTC10x6_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6;
+        case Format::ASTC10x8:          return GL_COMPRESSED_RGBA_ASTC_10x8;
+        case Format::ASTC10x8_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8;
+        case Format::ASTC10x10:         return GL_COMPRESSED_RGBA_ASTC_10x10;
+        case Format::ASTC10x10_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10;
+        case Format::ASTC12x10:         return GL_COMPRESSED_RGBA_ASTC_12x10;
+        case Format::ASTC12x10_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10;
+        case Format::ASTC12x12:         return GL_COMPRESSED_RGBA_ASTC_12x12;
+        case Format::ASTC12x12_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12;
+        #elif GL_KHR_texture_compression_astc_hdr
+        case Format::ASTC4x4:           return GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
+        case Format::ASTC4x4_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR;
+        case Format::ASTC5x4:           return GL_COMPRESSED_RGBA_ASTC_5x4_KHR;
+        case Format::ASTC5x4_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR;
+        case Format::ASTC5x5:           return GL_COMPRESSED_RGBA_ASTC_5x5_KHR;
+        case Format::ASTC5x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR;
+        case Format::ASTC6x5:           return GL_COMPRESSED_RGBA_ASTC_6x5_KHR;
+        case Format::ASTC6x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR;
+        case Format::ASTC6x6:           return GL_COMPRESSED_RGBA_ASTC_6x6_KHR;
+        case Format::ASTC6x6_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR;
+        case Format::ASTC8x5:           return GL_COMPRESSED_RGBA_ASTC_8x5_KHR;
+        case Format::ASTC8x5_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR;
+        case Format::ASTC8x6:           return GL_COMPRESSED_RGBA_ASTC_8x6_KHR;
+        case Format::ASTC8x6_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR;
+        case Format::ASTC8x8:           return GL_COMPRESSED_RGBA_ASTC_8x8_KHR;
+        case Format::ASTC8x8_sRGB:      return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR;
+        case Format::ASTC10x5:          return GL_COMPRESSED_RGBA_ASTC_10x5_KHR;
+        case Format::ASTC10x5_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR;
+        case Format::ASTC10x6:          return GL_COMPRESSED_RGBA_ASTC_10x6_KHR;
+        case Format::ASTC10x6_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR;
+        case Format::ASTC10x8:          return GL_COMPRESSED_RGBA_ASTC_10x8_KHR;
+        case Format::ASTC10x8_sRGB:     return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR;
+        case Format::ASTC10x10:         return GL_COMPRESSED_RGBA_ASTC_10x10_KHR;
+        case Format::ASTC10x10_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR;
+        case Format::ASTC12x10:         return GL_COMPRESSED_RGBA_ASTC_12x10_KHR;
+        case Format::ASTC12x10_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR;
+        case Format::ASTC12x12:         return GL_COMPRESSED_RGBA_ASTC_12x12_KHR;
+        case Format::ASTC12x12_sRGB:    return GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR;
+        #endif
+
+        /* --- Ericsson texture compression (ETC) formats --- */
+        #if GL_OES_compressed_ETC1_RGB8_texture
+        case Format::ETC1UNorm:         return GL_ETC1_RGB8_OES;
+        #endif // /GL_OES_compressed_ETC1_RGB8_texture
+
+        #if GL_ES_VERSION_3_0 || GL_VERSION_4_3
+        case Format::ETC2UNorm:         return GL_COMPRESSED_RGB8_ETC2;
+        case Format::ETC2UNorm_sRGB:    return GL_COMPRESSED_SRGB8_ETC2;
+        #endif // /GL_ES_VERSION_3_0
+
         default:                        return 0;
     }
 }
+
+#endif // /LLGL_GL_ENABLE_OPENGL2X
 
 /* ----- Map functions ----- */
 
@@ -186,7 +306,7 @@ GLenum Map(const CPUAccess cpuAccess)
         case CPUAccess::ReadWrite:      return GL_READ_WRITE;
     }
     #endif
-    MapFailed("CPUAccess");
+    LLGL_TRAP_GL_MAP(CPUAccess, cpuAccess);
 }
 
 GLenum Map(const DataType dataType)
@@ -208,35 +328,28 @@ GLenum Map(const DataType dataType)
         case DataType::Float64:     break;
         #endif
     }
-    MapFailed("DataType");
+    LLGL_TRAP_GL_MAP(DataType, dataType);
 }
 
 GLenum Map(const TextureType textureType)
 {
-    #ifdef LLGL_OPENGL
     switch (textureType)
     {
         case TextureType::Texture1D:        return GL_TEXTURE_1D;
         case TextureType::Texture2D:        return GL_TEXTURE_2D;
         case TextureType::Texture3D:        return GL_TEXTURE_3D;
         case TextureType::TextureCube:      return GL_TEXTURE_CUBE_MAP;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case TextureType::Texture1DArray:   return GL_TEXTURE_1D_ARRAY;
         case TextureType::Texture2DArray:   return GL_TEXTURE_2D_ARRAY;
         case TextureType::TextureCubeArray: return GL_TEXTURE_CUBE_MAP_ARRAY;
         case TextureType::Texture2DMS:      return GL_TEXTURE_2D_MULTISAMPLE;
         case TextureType::Texture2DMSArray: return GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
-    }
-    #else
-    switch (textureType)
-    {
-        case TextureType::Texture2D:        return GL_TEXTURE_2D;
-        case TextureType::Texture3D:        return GL_TEXTURE_3D;
-        case TextureType::TextureCube:      return GL_TEXTURE_CUBE_MAP;
-        case TextureType::Texture2DArray:   return GL_TEXTURE_2D_ARRAY;
+        #else
         default:                            break;
+        #endif
     }
-    #endif
-    MapFailed("TextureType");
+    LLGL_TRAP_GL_MAP(TextureType, textureType);
 }
 
 GLenum Map(const TextureSwizzle textureSwizzle)
@@ -250,21 +363,25 @@ GLenum Map(const TextureSwizzle textureSwizzle)
         case TextureSwizzle::Blue:  return GL_BLUE;
         case TextureSwizzle::Alpha: return GL_ALPHA;
     }
-    MapFailed("TextureSwizzle");
+    LLGL_TRAP_GL_MAP(TextureSwizzle, textureSwizzle);
 }
 
 GLenum Map(const Format textureFormat)
 {
-    if (auto result = MapOrZero(textureFormat))
+    if (GLenum result = MapOrZero(textureFormat))
         return result;
-    MapFailed("Format");
+    LLGL_TRAP_GL_MAP(Format, textureFormat);
 }
 
 static GLenum MapImageFormat(const ImageFormat imageFormat)
 {
     switch (imageFormat)
     {
+        #ifdef LLGL_WEBGL
+        case ImageFormat::Alpha:            return GL_ALPHA;
+        #else
         case ImageFormat::Alpha:            return GL_RED; // texture swizzle
+        #endif
         case ImageFormat::R:                return GL_RED;
         case ImageFormat::RG:               return GL_RG;
         case ImageFormat::RGB:              return GL_RGB;
@@ -276,25 +393,27 @@ static GLenum MapImageFormat(const ImageFormat imageFormat)
         case ImageFormat::BGRA:             return GL_BGRA;
         #endif
         case ImageFormat::Depth:            return GL_DEPTH_COMPONENT;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case ImageFormat::DepthStencil:     return GL_DEPTH_STENCIL;
+        #endif
         #ifdef LLGL_OPENGL
         case ImageFormat::Stencil:          return GL_STENCIL_INDEX;
-        case ImageFormat::BC1:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC2:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC3:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC4:              return GL_COMPRESSED_RED;
-        case ImageFormat::BC5:              return GL_COMPRESSED_RG;
         #endif
         default:                            break;
     }
-    MapFailed("ImageFormat");
+    LLGL_TRAP_GL_MAP(ImageFormat, imageFormat);
 }
 
 static GLenum MapIntegerImageFormat(const ImageFormat imageFormat)
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
     switch (imageFormat)
     {
+        #ifdef LLGL_WEBGL
+        case ImageFormat::Alpha:            break; // WebGL does not support texture swizzling, only GL_ALPHA but it's not an integer format
+        #else
         case ImageFormat::Alpha:            return GL_RED_INTEGER; // texture swizzle
+        #endif
         case ImageFormat::R:                return GL_RED_INTEGER;
         case ImageFormat::RG:               return GL_RG_INTEGER;
         case ImageFormat::RGB:              return GL_RGB_INTEGER;
@@ -309,15 +428,13 @@ static GLenum MapIntegerImageFormat(const ImageFormat imageFormat)
         case ImageFormat::DepthStencil:     return GL_DEPTH_STENCIL;
         #ifdef LLGL_OPENGL
         case ImageFormat::Stencil:          return GL_STENCIL_INDEX;
-        case ImageFormat::BC1:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC2:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC3:              return GL_COMPRESSED_RGBA;
-        case ImageFormat::BC4:              return GL_COMPRESSED_RED;
-        case ImageFormat::BC5:              return GL_COMPRESSED_RG;
         #endif
         default:                            break;
     }
-    MapFailed("ImageFormat");
+    LLGL_TRAP_GL_MAP(ImageFormat, imageFormat);
+    #else
+    LLGL_TRAP_FEATURE_NOT_SUPPORTED("integer image formats");
+    #endif
 }
 
 GLenum Map(const ImageFormat imageFormat)
@@ -346,7 +463,7 @@ GLenum Map(const CompareOp compareOp)
         case CompareOp::GreaterEqual:   return GL_GEQUAL;
         case CompareOp::AlwaysPass:     return GL_ALWAYS;
     }
-    MapFailed("CompareOp");
+    LLGL_TRAP_GL_MAP(CompareOp, compareOp);
 }
 
 GLenum Map(const StencilOp stencilOp)
@@ -362,7 +479,7 @@ GLenum Map(const StencilOp stencilOp)
         case StencilOp::IncWrap:    return GL_INCR_WRAP;
         case StencilOp::DecWrap:    return GL_DECR_WRAP;
     }
-    MapFailed("StencilOp");
+    LLGL_TRAP_GL_MAP(StencilOp, stencilOp);
 }
 
 GLenum Map(const BlendOp blendOp)
@@ -382,7 +499,7 @@ GLenum Map(const BlendOp blendOp)
         case BlendOp::SrcAlphaSaturate: return GL_SRC_ALPHA_SATURATE;
         case BlendOp::BlendFactor:      return GL_CONSTANT_COLOR;
         case BlendOp::InvBlendFactor:   return GL_ONE_MINUS_CONSTANT_COLOR;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
         case BlendOp::Src1Color:        return GL_SRC1_COLOR;
         case BlendOp::InvSrc1Color:     return GL_ONE_MINUS_SRC1_COLOR;
         case BlendOp::Src1Alpha:        return GL_SRC1_ALPHA;
@@ -391,7 +508,7 @@ GLenum Map(const BlendOp blendOp)
         default:                        break;
         #endif
     }
-    MapFailed("BlendOp");
+    LLGL_TRAP_GL_MAP(BlendOp, blendOp);
 }
 
 GLenum Map(const BlendArithmetic blendArithmetic)
@@ -404,7 +521,7 @@ GLenum Map(const BlendArithmetic blendArithmetic)
         case BlendArithmetic::Min:          return GL_MIN;
         case BlendArithmetic::Max:          return GL_MAX;
     }
-    MapFailed("BlendArithmetic");
+    LLGL_TRAP_GL_MAP(BlendArithmetic, blendArithmetic);
 }
 
 GLenum Map(const PolygonMode polygonMode)
@@ -417,7 +534,7 @@ GLenum Map(const PolygonMode polygonMode)
         case PolygonMode::Points:       return GL_POINT;
     }
     #endif
-    MapFailed("PolygonMode");
+    LLGL_TRAP_GL_MAP(PolygonMode, polygonMode);
 }
 
 GLenum Map(const CullMode cullMode)
@@ -428,24 +545,25 @@ GLenum Map(const CullMode cullMode)
         case CullMode::Front:       return GL_FRONT;
         case CullMode::Back:        return GL_BACK;
     }
-    MapFailed("CullMode");
+    LLGL_TRAP_GL_MAP(CullMode, cullMode);
 }
 
 GLenum Map(const SamplerAddressMode addressMode)
 {
     switch (addressMode)
     {
-        case SamplerAddressMode::Repeat:       return GL_REPEAT;
-        case SamplerAddressMode::Mirror:       return GL_MIRRORED_REPEAT;
-        case SamplerAddressMode::Clamp:        return GL_CLAMP_TO_EDGE;
-        #ifdef LLGL_OPENGL
-        case SamplerAddressMode::Border:       return GL_CLAMP_TO_BORDER;
-        case SamplerAddressMode::MirrorOnce:   return GL_MIRROR_CLAMP_TO_EDGE;
-        #else
-        default:                        break;
+        case SamplerAddressMode::Repeat:        return GL_REPEAT;
+        case SamplerAddressMode::Mirror:        return GL_MIRRORED_REPEAT;
+        case SamplerAddressMode::Clamp:         return GL_CLAMP_TO_EDGE;
+        #ifdef GL_CLAMP_TO_BORDER
+        case SamplerAddressMode::Border:        return GL_CLAMP_TO_BORDER;
         #endif
+        #ifdef GL_MIRROR_CLAMP_TO_EDGE
+        case SamplerAddressMode::MirrorOnce:    return GL_MIRROR_CLAMP_TO_EDGE;
+        #endif
+        default:                                break;
     }
-    MapFailed("SamplerAddressMode");
+    LLGL_TRAP_GL_MAP(SamplerAddressMode, addressMode);
 }
 
 GLenum Map(const SamplerFilter textureFilter)
@@ -455,7 +573,7 @@ GLenum Map(const SamplerFilter textureFilter)
         case SamplerFilter::Nearest:    return GL_NEAREST;
         case SamplerFilter::Linear:     return GL_LINEAR;
     }
-    MapFailed("SamplerFilter");
+    LLGL_TRAP_GL_MAP(SamplerFilter, textureFilter);
 }
 
 GLenum Map(const SamplerFilter textureMinFilter, const SamplerFilter textureMipMapFilter)
@@ -478,7 +596,10 @@ GLenum Map(const SamplerFilter textureMinFilter, const SamplerFilter textureMipM
             }
             break;
     }
-    MapFailed("Min/MipMap SamplerFilter");
+    LLGL_TRAP(
+        "failed to map LLGL::SamplerFilter for Min(%d)/MipMap(%d) to OpenGL parameter",
+        static_cast<int>(textureMinFilter), static_cast<int>(textureMipMapFilter)
+    );
 }
 
 GLenum Map(const ShaderType shaderType)
@@ -486,25 +607,26 @@ GLenum Map(const ShaderType shaderType)
     switch (shaderType)
     {
         case ShaderType::Vertex:            return GL_VERTEX_SHADER;
-        #if defined(GL_VERSION_3_2) || defined(GL_ES_VERSION_3_2)
+        #if GL_VERSION_3_2 || GL_ES_VERSION_3_2
         case ShaderType::Geometry:          return GL_GEOMETRY_SHADER;
         #endif
-        #if defined(GL_VERSION_4_0) || defined(GL_ES_VERSION_3_2)
+        #if GL_VERSION_4_0 || GL_ES_VERSION_3_2
         case ShaderType::TessControl:       return GL_TESS_CONTROL_SHADER;
         case ShaderType::TessEvaluation:    return GL_TESS_EVALUATION_SHADER;
         #endif
         case ShaderType::Fragment:          return GL_FRAGMENT_SHADER;
-        #if defined(GL_VERSION_4_3) || defined(GL_ES_VERSION_3_1)
+        #if GL_VERSION_4_3 || GL_ES_VERSION_3_1
         case ShaderType::Compute:           return GL_COMPUTE_SHADER;
         #endif
         default:                            break;
     }
-    MapFailed("ShaderType");
+    LLGL_TRAP_GL_MAP(ShaderType, shaderType);
 }
 
 GLenum Map(const RenderConditionMode renderConditionMode)
 {
-    #ifdef LLGL_OPENGL
+    #if !LLGL_GL_ENABLE_OPENGL2X
+    #if LLGL_OPENGL
     switch (renderConditionMode)
     {
         case RenderConditionMode::Wait:                     return GL_QUERY_WAIT;
@@ -516,12 +638,12 @@ GLenum Map(const RenderConditionMode renderConditionMode)
         case RenderConditionMode::NoWaitInverted:           return GL_QUERY_NO_WAIT_INVERTED;
         case RenderConditionMode::ByRegionWaitInverted:     return GL_QUERY_BY_REGION_WAIT_INVERTED;
         case RenderConditionMode::ByRegionNoWaitInverted:   return GL_QUERY_BY_REGION_NO_WAIT_INVERTED;
-        #else
+        #endif // /__APPLE__
         default:                                            break;
-        #endif
     }
     #endif
-    MapFailed("RenderConditionMode");
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
+    LLGL_TRAP_GL_MAP(RenderConditionMode, renderConditionMode);
 }
 
 GLenum Map(const LogicOp logicOp)
@@ -548,7 +670,7 @@ GLenum Map(const LogicOp logicOp)
         case LogicOp::Equiv:        return GL_EQUIV;
     }
     #endif
-    MapFailed("LogicOp");
+    LLGL_TRAP_GL_MAP(LogicOp, logicOp);
 }
 
 GLenum Map(const StencilFace stencilFace)
@@ -559,7 +681,7 @@ GLenum Map(const StencilFace stencilFace)
         case StencilFace::Front:        return GL_FRONT;
         case StencilFace::Back:         return GL_BACK;
     }
-    MapFailed("StencilFace");
+    LLGL_TRAP_GL_MAP(StencilFace, stencilFace);
 }
 
 GLenum ToDrawMode(const PrimitiveTopology primitiveTopology)
@@ -569,24 +691,24 @@ GLenum ToDrawMode(const PrimitiveTopology primitiveTopology)
         case PrimitiveTopology::PointList:              return GL_POINTS;
         case PrimitiveTopology::LineList:               return GL_LINES;
         case PrimitiveTopology::LineStrip:              return GL_LINE_STRIP;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
         case PrimitiveTopology::LineListAdjacency:      return GL_LINES_ADJACENCY;
         case PrimitiveTopology::LineStripAdjacency:     return GL_LINE_STRIP_ADJACENCY;
         #endif
         case PrimitiveTopology::TriangleList:           return GL_TRIANGLES;
         case PrimitiveTopology::TriangleStrip:          return GL_TRIANGLE_STRIP;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
         case PrimitiveTopology::TriangleListAdjacency:  return GL_TRIANGLES_ADJACENCY;
         case PrimitiveTopology::TriangleStripAdjacency: return GL_TRIANGLE_STRIP_ADJACENCY;
         #endif
         default:
-            #ifdef LLGL_OPENGL
+            #if LLGL_OPENGL && !LLGL_GL_ENABLE_OPENGL2X
             if (primitiveTopology >= PrimitiveTopology::Patches1 && primitiveTopology <= PrimitiveTopology::Patches32)
                 return GL_PATCHES;
             #endif
             break;
     }
-    MapFailed("PrimitiveTopology");
+    LLGL_TRAP_GL_MAP(PrimitiveTopology, primitiveTopology);
 }
 
 GLenum ToPrimitiveMode(const PrimitiveTopology primitiveTopology)
@@ -607,10 +729,10 @@ GLenum ToPrimitiveMode(const PrimitiveTopology primitiveTopology)
             return GL_TRIANGLES;
         default:
             if (primitiveTopology >= PrimitiveTopology::Patches1 && primitiveTopology <= PrimitiveTopology::Patches32)
-                return 0;
+                return GL_TRIANGLES; //TODO: this might be dependent on the tessellation-evaluation signature, e.g. 'layout(triangles) in;'
             break;
     }
-    MapFailed("PrimitiveTopology");
+    LLGL_TRAP_GL_MAP(PrimitiveTopology, primitiveTopology);
 }
 
 
@@ -618,7 +740,7 @@ GLenum ToPrimitiveMode(const PrimitiveTopology primitiveTopology)
 
 UniformType UnmapUniformType(const GLenum uniformType)
 {
-    #ifdef LLGL_OPENGLES3
+    #ifdef LLGL_OPENGL
 
     switch (uniformType)
     {
@@ -627,70 +749,22 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_FLOAT_VEC2:         return UniformType::Float2;
         case GL_FLOAT_VEC3:         return UniformType::Float3;
         case GL_FLOAT_VEC4:         return UniformType::Float4;
-        case GL_INT:                return UniformType::Int1;
-        case GL_INT_VEC2:           return UniformType::Int2;
-        case GL_INT_VEC3:           return UniformType::Int3;
-        case GL_INT_VEC4:           return UniformType::Int4;
-        case GL_UNSIGNED_INT:       return UniformType::UInt1;
-        case GL_UNSIGNED_INT_VEC2:  return UniformType::UInt2;
-        case GL_UNSIGNED_INT_VEC3:  return UniformType::UInt3;
-        case GL_UNSIGNED_INT_VEC4:  return UniformType::UInt4;
-        case GL_BOOL:               return UniformType::Bool1;
-        case GL_BOOL_VEC2:          return UniformType::Bool2;
-        case GL_BOOL_VEC3:          return UniformType::Bool3;
-        case GL_BOOL_VEC4:          return UniformType::Bool4;
-
-        /* ----- Matrices ----- */
-        case GL_FLOAT_MAT2:         return UniformType::Float2x2;
-        case GL_FLOAT_MAT3:         return UniformType::Float3x3;
-        case GL_FLOAT_MAT4:         return UniformType::Float4x4;
-        case GL_FLOAT_MAT2x3:       return UniformType::Float2x3;
-        case GL_FLOAT_MAT2x4:       return UniformType::Float2x4;
-        case GL_FLOAT_MAT3x2:       return UniformType::Float3x2;
-        case GL_FLOAT_MAT3x4:       return UniformType::Float3x4;
-        case GL_FLOAT_MAT4x2:       return UniformType::Float4x2;
-        case GL_FLOAT_MAT4x3:       return UniformType::Float4x3;
-
-        /* ----- Samplers ----- */
-        case GL_SAMPLER_2D:
-        case GL_SAMPLER_3D:
-        case GL_SAMPLER_CUBE:
-        case GL_SAMPLER_2D_SHADOW:
-        case GL_SAMPLER_2D_ARRAY:
-        case GL_SAMPLER_2D_ARRAY_SHADOW:
-        case GL_SAMPLER_CUBE_SHADOW:
-        case GL_INT_SAMPLER_2D:
-        case GL_INT_SAMPLER_3D:
-        case GL_INT_SAMPLER_CUBE:
-        case GL_INT_SAMPLER_2D_ARRAY:
-        case GL_UNSIGNED_INT_SAMPLER_2D:
-        case GL_UNSIGNED_INT_SAMPLER_3D:
-        case GL_UNSIGNED_INT_SAMPLER_CUBE:
-        case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
-            return UniformType::Sampler;
-    }
-
-    #else
-
-    switch (uniformType)
-    {
-        /* ----- Scalars/Vectors ----- */
-        case GL_FLOAT:              return UniformType::Float1;
-        case GL_FLOAT_VEC2:         return UniformType::Float2;
-        case GL_FLOAT_VEC3:         return UniformType::Float3;
-        case GL_FLOAT_VEC4:         return UniformType::Float4;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_DOUBLE:             return UniformType::Double1;
         case GL_DOUBLE_VEC2:        return UniformType::Double2;
         case GL_DOUBLE_VEC3:        return UniformType::Double3;
         case GL_DOUBLE_VEC4:        return UniformType::Double4;
+        #endif
         case GL_INT:                return UniformType::Int1;
         case GL_INT_VEC2:           return UniformType::Int2;
         case GL_INT_VEC3:           return UniformType::Int3;
         case GL_INT_VEC4:           return UniformType::Int4;
         case GL_UNSIGNED_INT:       return UniformType::UInt1;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_UNSIGNED_INT_VEC2:  return UniformType::UInt2;
         case GL_UNSIGNED_INT_VEC3:  return UniformType::UInt3;
         case GL_UNSIGNED_INT_VEC4:  return UniformType::UInt4;
+        #endif
         case GL_BOOL:               return UniformType::Bool1;
         case GL_BOOL_VEC2:          return UniformType::Bool2;
         case GL_BOOL_VEC3:          return UniformType::Bool3;
@@ -706,6 +780,7 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_FLOAT_MAT4x2:       return UniformType::Float4x2;
         case GL_FLOAT_MAT4x3:       return UniformType::Float4x3;
         case GL_FLOAT_MAT4:         return UniformType::Float4x4;
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_DOUBLE_MAT2:        return UniformType::Double2x2;
         case GL_DOUBLE_MAT2x3:      return UniformType::Double2x3;
         case GL_DOUBLE_MAT2x4:      return UniformType::Double2x4;
@@ -715,6 +790,7 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_DOUBLE_MAT4x2:      return UniformType::Double4x2;
         case GL_DOUBLE_MAT4x3:      return UniformType::Double4x3;
         case GL_DOUBLE_MAT4:        return UniformType::Double4x4;
+        #endif
 
         /* ----- Samplers ----- */
         case GL_SAMPLER_1D:
@@ -723,6 +799,7 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_SAMPLER_CUBE:
         case GL_SAMPLER_1D_SHADOW:
         case GL_SAMPLER_2D_SHADOW:
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_SAMPLER_1D_ARRAY:
         case GL_SAMPLER_2D_ARRAY:
         case GL_SAMPLER_1D_ARRAY_SHADOW:
@@ -753,6 +830,7 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY:
         case GL_UNSIGNED_INT_SAMPLER_BUFFER:
         case GL_UNSIGNED_INT_SAMPLER_2D_RECT:
+        #endif
             return UniformType::Sampler;
 
         #ifndef __APPLE__
@@ -795,7 +873,59 @@ UniformType UnmapUniformType(const GLenum uniformType)
         #endif // /__APPLE__
     }
 
-    #endif // /LLGL_OPENGLES3
+    #else // LLGL_OPENGL
+
+    switch (uniformType)
+    {
+        /* ----- Scalars/Vectors ----- */
+        case GL_FLOAT:              return UniformType::Float1;
+        case GL_FLOAT_VEC2:         return UniformType::Float2;
+        case GL_FLOAT_VEC3:         return UniformType::Float3;
+        case GL_FLOAT_VEC4:         return UniformType::Float4;
+        case GL_INT:                return UniformType::Int1;
+        case GL_INT_VEC2:           return UniformType::Int2;
+        case GL_INT_VEC3:           return UniformType::Int3;
+        case GL_INT_VEC4:           return UniformType::Int4;
+        case GL_UNSIGNED_INT:       return UniformType::UInt1;
+        case GL_UNSIGNED_INT_VEC2:  return UniformType::UInt2;
+        case GL_UNSIGNED_INT_VEC3:  return UniformType::UInt3;
+        case GL_UNSIGNED_INT_VEC4:  return UniformType::UInt4;
+        case GL_BOOL:               return UniformType::Bool1;
+        case GL_BOOL_VEC2:          return UniformType::Bool2;
+        case GL_BOOL_VEC3:          return UniformType::Bool3;
+        case GL_BOOL_VEC4:          return UniformType::Bool4;
+
+        /* ----- Matrices ----- */
+        case GL_FLOAT_MAT2:         return UniformType::Float2x2;
+        case GL_FLOAT_MAT3:         return UniformType::Float3x3;
+        case GL_FLOAT_MAT4:         return UniformType::Float4x4;
+        case GL_FLOAT_MAT2x3:       return UniformType::Float2x3;
+        case GL_FLOAT_MAT2x4:       return UniformType::Float2x4;
+        case GL_FLOAT_MAT3x2:       return UniformType::Float3x2;
+        case GL_FLOAT_MAT3x4:       return UniformType::Float3x4;
+        case GL_FLOAT_MAT4x2:       return UniformType::Float4x2;
+        case GL_FLOAT_MAT4x3:       return UniformType::Float4x3;
+
+        /* ----- Samplers ----- */
+        case GL_SAMPLER_2D:
+        case GL_SAMPLER_3D:
+        case GL_SAMPLER_CUBE:
+        case GL_SAMPLER_2D_SHADOW:
+        case GL_SAMPLER_2D_ARRAY:
+        case GL_SAMPLER_2D_ARRAY_SHADOW:
+        case GL_SAMPLER_CUBE_SHADOW:
+        case GL_INT_SAMPLER_2D:
+        case GL_INT_SAMPLER_3D:
+        case GL_INT_SAMPLER_CUBE:
+        case GL_INT_SAMPLER_2D_ARRAY:
+        case GL_UNSIGNED_INT_SAMPLER_2D:
+        case GL_UNSIGNED_INT_SAMPLER_3D:
+        case GL_UNSIGNED_INT_SAMPLER_CUBE:
+        case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
+            return UniformType::Sampler;
+    }
+
+    #endif // /LLGL_OPENGL
 
     return UniformType::Undefined;
 }
@@ -816,6 +946,7 @@ GLenum ToTextureCubeMap(std::uint32_t arrayLayer)
 
 GLenum ToColorAttachment(std::uint32_t attachmentIndex)
 {
+    #if LLGL_GLEXT_FRAMEBUFFER_OBJECT
     if (attachmentIndex < LLGL_MAX_NUM_COLOR_ATTACHMENTS)
     {
         static const GLenum g_drawBuffers[] =
@@ -829,8 +960,61 @@ GLenum ToColorAttachment(std::uint32_t attachmentIndex)
         };
         return g_drawBuffers[attachmentIndex];
     }
+    #endif
     return 0;
 }
+    
+#if LLGL_GL_ENABLE_OPENGL2X
+
+Format UnmapFormat(const GLenum internalFormat)
+{
+    switch (internalFormat)
+    {
+        /* --- Alpha channel color formats --- */
+        case GL_ALPHA:                                  /*pass*/
+        case GL_ALPHA8:                                 return Format::A8UNorm;
+
+        /* --- Red channel color formats --- */
+        case GL_LUMINANCE:                              /*pass*/
+        case GL_LUMINANCE8:                             return Format::R8UNorm;
+
+        case GL_LUMINANCE16:                            return Format::R16UNorm;
+
+        /* --- RG color formats --- */
+        case GL_LUMINANCE_ALPHA:                        /*pass*/
+        case GL_LUMINANCE8_ALPHA8:                      return Format::RG8UNorm;
+
+        case GL_LUMINANCE16_ALPHA16:                    return Format::RG16UNorm;
+        /* --- RGB color formats --- */
+
+        case GL_RGB:                                    /*pass*/
+        case GL_RGB8:                                   return Format::RGB8UNorm;
+
+        case GL_RGB16:                                  return Format::RGB16UNorm;
+
+        /* --- RGBA color formats --- */
+        case GL_RGBA:                                   /*pass*/
+        case GL_RGBA8:                                  return Format::RGBA8UNorm;
+            
+        case GL_SRGB_ALPHA:                             /*pass*/
+        case GL_SRGB8_ALPHA8:                           return Format::RGBA8UNorm_sRGB;
+
+        case GL_RGBA16:                                 return Format::RGBA16UNorm;
+
+        /* --- Packed formats --- */
+        case GL_RGB10_A2:                               return Format::RGB10A2UNorm;
+
+        /* --- Depth-stencil formats --- */
+        case GL_DEPTH_COMPONENT16:                      return Format::D16UNorm;
+        case GL_DEPTH_COMPONENT32:                      /* pass */
+        case GL_DEPTH_COMPONENT:                        return Format::D32Float;
+
+        default:                                        break;
+    }
+    return Format::Undefined;
+}
+
+#else
 
 Format UnmapFormat(const GLenum internalFormat)
 {
@@ -937,29 +1121,102 @@ Format UnmapFormat(const GLenum internalFormat)
         case GL_DEPTH32F_STENCIL8:                      return Format::D32FloatS8X24UInt;
 
         /* --- Block compression (BC) formats --- */
-        #ifdef GL_EXT_texture_compression_s3tc
+        #if GL_EXT_texture_compression_s3tc
         case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:          return Format::BC1UNorm;
         case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:          return Format::BC2UNorm;
         case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:          return Format::BC3UNorm;
         #endif // /GL_EXT_texture_compression_s3tc
 
-        #ifdef GL_EXT_texture_sRGB
+        #if GL_EXT_texture_sRGB
         case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:    return Format::BC1UNorm_sRGB;
         case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:    return Format::BC2UNorm_sRGB;
         case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:    return Format::BC3UNorm_sRGB;
         #endif // /GL_EXT_texture_sRGB
 
-        #ifdef GL_EXT_texture_compression_rgtc
+        #if GL_EXT_texture_compression_rgtc
         case GL_COMPRESSED_RED_RGTC1_EXT:               return Format::BC4UNorm;
         case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:        return Format::BC4SNorm;
         case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:         return Format::BC5UNorm;
         case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:  return Format::BC5SNorm;
         #endif // /GL_EXT_texture_compression_rgtc
 
+        /* --- Advanced scalable texture compression (ASTC) formats --- */
+        #if GL_ES_VERSION_3_2
+        case GL_COMPRESSED_RGBA_ASTC_4x4:               return Format::ASTC4x4;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4:       return Format::ASTC4x4_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_5x4:               return Format::ASTC5x4;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4:       return Format::ASTC5x4_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_5x5:               return Format::ASTC5x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5:       return Format::ASTC5x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_6x5:               return Format::ASTC6x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5:       return Format::ASTC6x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_6x6:               return Format::ASTC6x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6:       return Format::ASTC6x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x5:               return Format::ASTC8x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5:       return Format::ASTC8x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x6:               return Format::ASTC8x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6:       return Format::ASTC8x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x8:               return Format::ASTC8x8;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8:       return Format::ASTC8x8_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x5:              return Format::ASTC10x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5:      return Format::ASTC10x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x6:              return Format::ASTC10x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6:      return Format::ASTC10x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x8:              return Format::ASTC10x8;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8:      return Format::ASTC10x8_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x10:             return Format::ASTC10x10;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10:     return Format::ASTC10x10_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_12x10:             return Format::ASTC12x10;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10:     return Format::ASTC12x10_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_12x12:             return Format::ASTC12x12;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12:     return Format::ASTC12x12_sRGB;
+        #elif GL_KHR_texture_compression_astc_hdr
+        case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:           return Format::ASTC4x4;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:   return Format::ASTC4x4_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_5x4_KHR:           return Format::ASTC5x4;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR:   return Format::ASTC5x4_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_5x5_KHR:           return Format::ASTC5x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR:   return Format::ASTC5x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_6x5_KHR:           return Format::ASTC6x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR:   return Format::ASTC6x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_6x6_KHR:           return Format::ASTC6x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR:   return Format::ASTC6x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x5_KHR:           return Format::ASTC8x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR:   return Format::ASTC8x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x6_KHR:           return Format::ASTC8x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR:   return Format::ASTC8x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_8x8_KHR:           return Format::ASTC8x8;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR:   return Format::ASTC8x8_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x5_KHR:          return Format::ASTC10x5;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR:  return Format::ASTC10x5_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x6_KHR:          return Format::ASTC10x6;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR:  return Format::ASTC10x6_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x8_KHR:          return Format::ASTC10x8;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR:  return Format::ASTC10x8_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_10x10_KHR:         return Format::ASTC10x10;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR: return Format::ASTC10x10_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_12x10_KHR:         return Format::ASTC12x10;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR: return Format::ASTC12x10_sRGB;
+        case GL_COMPRESSED_RGBA_ASTC_12x12_KHR:         return Format::ASTC12x12;
+        case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR: return Format::ASTC12x12_sRGB;
+        #endif
+
+        /* --- Ericsson texture compression (ETC) formats --- */
+        #if GL_ES_VERSION_3_0 || GL_VERSION_4_3
+        case GL_COMPRESSED_RGB8_ETC2:                   return Format::ETC2UNorm;
+        case GL_COMPRESSED_SRGB8_ETC2:                  return Format::ETC2UNorm_sRGB;
+        #endif // /GL_ES_VERSION_3_0
+
+        #if GL_OES_compressed_ETC1_RGB8_texture
+        case GL_ETC1_RGB8_OES:                          return Format::ETC1UNorm;
+        #endif // /GL_OES_compressed_ETC1_RGB8_texture
+
         default:                                        break;
     }
     return Format::Undefined;
 }
+
+#endif // /LLGL_GL_ENABLE_OPENGL2X
 
 DataType UnmapDataType(const GLenum type)
 {
@@ -977,8 +1234,10 @@ DataType UnmapDataType(const GLenum type)
         case GL_DOUBLE:         return DataType::Float64;
         #endif
     }
-    UnmapFailed("DataType");
+    LLGL_TRAP_GL_UNMAP(DataType, type);
 }
+
+#if !LLGL_GL_ENABLE_OPENGL2X
 
 bool IsIntegerTypedFormat(GLenum internalFormat)
 {
@@ -1013,6 +1272,15 @@ bool IsIntegerTypedFormat(GLenum internalFormat)
             return false;
     }
 }
+    
+#else // !LLGL_GL_ENABLE_OPENGL2X
+
+bool IsIntegerTypedFormat(GLenum internalFormat)
+{
+    return false; // Not supported in GL 2.x
+}
+
+#endif // /!LLGL_GL_ENABLE_OPENGL2X
 
 bool IsDepthFormat(GLenum internalFormat)
 {
@@ -1031,6 +1299,8 @@ bool IsDepthFormat(GLenum internalFormat)
     }
 }
 
+#if !LLGL_GL_ENABLE_OPENGL2X
+
 bool IsDepthStencilFormat(GLenum internalFormat)
 {
     switch (internalFormat)
@@ -1038,7 +1308,7 @@ bool IsDepthStencilFormat(GLenum internalFormat)
         case GL_DEPTH24_STENCIL8:
         case GL_DEPTH_STENCIL:
         case GL_DEPTH32F_STENCIL8:
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL
         case GL_STENCIL_INDEX:
         #endif
         case GL_STENCIL_INDEX8:
@@ -1046,6 +1316,79 @@ bool IsDepthStencilFormat(GLenum internalFormat)
         default:
             return false;
     }
+}
+
+#else // !LLGL_GL_ENABLE_OPENGL2X
+
+bool IsDepthStencilFormat(GLenum internalFormat)
+{
+    return false; // Not supported in GL 2.x
+}
+
+#endif // /!LLGL_GL_ENABLE_OPENGL2X
+
+GLenum BufferTargetToBindingPname(GLenum target)
+{
+    switch (target)
+    {
+        case GL_ARRAY_BUFFER:               return GL_ARRAY_BUFFER_BINDING;
+        case GL_ELEMENT_ARRAY_BUFFER:       return GL_ELEMENT_ARRAY_BUFFER_BINDING;
+        case GL_PIXEL_PACK_BUFFER:          return GL_PIXEL_PACK_BUFFER_BINDING;
+        case GL_PIXEL_UNPACK_BUFFER:        return GL_PIXEL_UNPACK_BUFFER_BINDING;
+        #if !LLGL_GL_ENABLE_OPENGL2X
+        case GL_TRANSFORM_FEEDBACK_BUFFER:  return GL_TRANSFORM_FEEDBACK_BUFFER_BINDING;
+        case GL_UNIFORM_BUFFER:             return GL_UNIFORM_BUFFER_BINDING;
+        #endif
+
+        #if GL_VERSION_4_0 || GL_ES_VERSION_3_1
+        case GL_DRAW_INDIRECT_BUFFER:       return GL_DRAW_INDIRECT_BUFFER_BINDING;
+        #endif
+
+        #if GL_VERSION_4_2 || GL_ES_VERSION_3_0
+        case GL_COPY_READ_BUFFER:           return GL_COPY_READ_BUFFER_BINDING;
+        case GL_COPY_WRITE_BUFFER:          return GL_COPY_WRITE_BUFFER_BINDING;
+        #endif
+
+        #if GL_VERSION_4_2 || GL_ES_VERSION_3_1
+        case GL_ATOMIC_COUNTER_BUFFER:      return GL_ATOMIC_COUNTER_BUFFER_BINDING;
+        #endif
+
+        #if GL_VERSION_4_3 || GL_ES_VERSION_3_1
+        case GL_DISPATCH_INDIRECT_BUFFER:   return GL_DISPATCH_INDIRECT_BUFFER_BINDING;
+        case GL_SHADER_STORAGE_BUFFER:      return GL_SHADER_STORAGE_BUFFER_BINDING;
+        #endif
+
+        #if GL_VERSION_4_4 || GL_ES_VERSION_3_2
+        case GL_TEXTURE_BUFFER:             return GL_TEXTURE_BUFFER_BINDING;
+        #endif
+
+        default:                            return 0;
+    }
+}
+
+const char* SystemValueToString(SystemValue sytemValue, ShaderType shaderType)
+{
+    switch (sytemValue)
+    {
+        case SystemValue::Undefined:            break;
+        case SystemValue::ClipDistance:         return "gl_ClipDistance";
+        case SystemValue::Color:                break; // n/a
+        case SystemValue::CullDistance:         return "gl_CullDistance";
+        case SystemValue::Depth:                return "gl_FragDepth";
+        case SystemValue::DepthGreater:         break; // n/a
+        case SystemValue::DepthLess:            break; // n/a
+        case SystemValue::FrontFacing:          return "gl_FrontFacing";
+        case SystemValue::InstanceID:           return "gl_InstanceID";
+        case SystemValue::Position:             return (shaderType == ShaderType::Fragment ? "gl_FragCoord" : "gl_Position");
+        case SystemValue::PrimitiveID:          return "gl_PrimitiveID";
+        case SystemValue::RenderTargetIndex:    return "gl_Layer";
+        case SystemValue::SampleMask:           return "gl_SampleMask";
+        case SystemValue::SampleID:             return "gl_SampleID";
+        case SystemValue::Stencil:              return "gl_Stencil";
+        case SystemValue::VertexID:             return "gl_VertexID";
+        case SystemValue::ViewportIndex:        return "gl_ViewportIndex";
+    }
+    return nullptr;
 }
 
 

@@ -26,9 +26,14 @@ static bool IsPowerOfTwo(std::uint32_t x)
 
 static bool IsPowerOfTwoExtent(const Extent3D& extent)
 {
-    return (IsPowerOfTwo(extent.width) || IsPowerOfTwo(extent.height) || IsPowerOfTwo(extent.depth));
+    return (IsPowerOfTwo(extent.width) && IsPowerOfTwo(extent.height) && IsPowerOfTwo(extent.depth));
 }
 
+/*
+This test doesn't render anything but only evaluates the MIP-map levels of the textures already loaded by the testbed.
+Non-power-of-two (NPOT) textures are accepted to use different minification filters (such as box-filter, which can incur undersampling),
+which requires a larger threshold when comparing with the reference images.
+*/
 DEF_TEST( MipMaps )
 {
     TestResult result = TestResult::Passed;
@@ -45,8 +50,8 @@ DEF_TEST( MipMaps )
           For future improvements, these backends could provide MIP-map generation via image-blit functionality to compute a perfect reduction filter (i.e. no undersampling).
           This could be enabled via a new MiscFlags entry, for example: MiscFlags::HighQualityMipFilter.
         */
-        const bool isNpotTexture = IsPowerOfTwoExtent(texDesc.extent);
-        const int diffThreshold = (isNpotTexture ? 170 : 2);
+        const bool isNpotTexture = !IsPowerOfTwoExtent(texDesc.extent);
+        const int diffThreshold = (isNpotTexture ? 170 : 10);
 
         for_subrange(mip, 1, texDesc.mipLevels)
         {

@@ -9,6 +9,7 @@
 #include "../RenderState/GLStateManager.h"
 #include "../Ext/GLExtensionLoader.h"
 #include "../Ext/GLExtensionRegistry.h"
+#include "../Profile/GLProfile.h"
 #include "../../../Core/CoreUtils.h"
 #include <LLGL/Window.h>
 #include <LLGL/Canvas.h>
@@ -21,12 +22,17 @@ namespace LLGL
 
 GLContextManager::GLContextManager(
     const RendererConfigurationOpenGL&  profile,
+    const NewGLContextCallback&         newContextCallback,
     const void*                         customNativeHandle,
     std::size_t                         customNativeHandleSize)
+:
+    profile_            { profile            },
+    newContextCallback_ { newContextCallback }
 {
-    profile_.contextProfile = profile.contextProfile;
-    profile_.majorVersion   = profile.majorVersion;
-    profile_.minorVersion   = profile.minorVersion;
+    /* Adjust context profile if Auto-selection is specified */
+    if (profile_.contextProfile == OpenGLContextProfile::Auto)
+        profile_.contextProfile = GLProfile::GetContextProfile();
+
     if (customNativeHandle != nullptr && customNativeHandleSize > 0)
     {
         customNativeHandle_.resize(customNativeHandleSize, UninitializeTag{});
@@ -34,10 +40,13 @@ GLContextManager::GLContextManager(
     }
 }
 
-std::shared_ptr<GLContext> GLContextManager::AllocContext(const GLPixelFormat* pixelFormat, Surface* surface)
+std::shared_ptr<GLContext> GLContextManager::AllocContext(
+    const GLPixelFormat*    pixelFormat,
+    bool                    acceptCompatibleFormat,
+    Surface*                surface)
 {
     if (pixelFormat != nullptr)
-        return FindOrMakeContextWithPixelFormat(*pixelFormat, surface);
+        return FindOrMakeContextWithPixelFormat(*pixelFormat, acceptCompatibleFormat, surface);
     else
         return FindOrMakeAnyContext();
 }
@@ -100,17 +109,52 @@ std::shared_ptr<GLContext> GLContextManager::MakeContextWithPixelFormat(const GL
     stateMngr.DetermineExtensionsAndLimits();
     InitRenderStates(stateMngr);
 
+    /* Cache new context as the current one */
+    GLContext::SetCurrent(context.get());
+
+    /* Invoke callback to register new GLContext */
+    if (newContextCallback_)
+        newContextCallback_(*context, pixelFormat);
+
     return context;
 }
 
-std::shared_ptr<GLContext> GLContextManager::FindOrMakeContextWithPixelFormat(const GLPixelFormat& pixelFormat, Surface* surface)
+/*
+Returns true if the pixel format 'baseFormat' is considered compatible with 'newFormat', i.e. its bits are greater or equal.
+This serves the purpose of reducing the chance of creating more GL contexts as switching between them is very slow
+and LLGL does not make any guarantees of how many samples are actually provided when requesting a certain multi-sample format.
+*/
+static bool IsGLPixelFormatCompatibleWith(const GLPixelFormat& baseFormat, const GLPixelFormat& newFormat)
 {
-    /* Try to find suitable pixel format or make new context otherwise */
+    return
+    (
+        baseFormat.colorBits   >= newFormat.colorBits    &&
+        baseFormat.depthBits   >= newFormat.depthBits    &&
+        baseFormat.stencilBits >= newFormat.stencilBits  &&
+        baseFormat.samples     >= newFormat.samples
+    );
+}
+
+std::shared_ptr<GLContext> GLContextManager::FindOrMakeContextWithPixelFormat(const GLPixelFormat& pixelFormat, bool acceptCompatibleFormat, Surface* surface)
+{
+    /* Try to find pixel format with an exact match first */
     for (const GLPixelFormatWithContext& formatWithContext : pixelFormats_)
     {
         if (formatWithContext.pixelFormat == pixelFormat)
             return formatWithContext.context;
     }
+
+    /* Try to find suitable pixel format that is considered compatible next */
+    if (acceptCompatibleFormat)
+    {
+        for (const GLPixelFormatWithContext& formatWithContext : pixelFormats_)
+        {
+            if (IsGLPixelFormatCompatibleWith(formatWithContext.pixelFormat, pixelFormat))
+                return formatWithContext.context;
+        }
+    }
+
+    /* Make a new context with the specified pixel format */
     return MakeContextWithPixelFormat(pixelFormat, surface);
 }
 
@@ -129,12 +173,12 @@ void GLContextManager::InitRenderStates(GLStateManager& stateMngr)
     stateMngr.ClearCache();
 
     /* D3D11, Vulkan, and Metal always use a fixed restart index for strip topologies */
-    #ifdef LLGL_PRIMITIVE_RESTART_FIXED_INDEX
+    #if LLGL_PRIMITIVE_RESTART_FIXED_INDEX
     if (HasExtension(GLExt::ARB_ES3_compatibility))
         stateMngr.Enable(GLState::PrimitiveRestartFixedIndex);
     #endif
 
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL
     /* D3D10+ has this by default */
     if (HasExtension(GLExt::ARB_seamless_cubemap_per_texture))
         stateMngr.Enable(GLState::TextureCubeMapSeamless);

@@ -19,7 +19,6 @@ namespace Internal
 
 // Shortcuts for the format flags
 static constexpr long Depth         = FormatFlags::HasDepth;
-static constexpr long Stencil       = FormatFlags::HasStencil;
 static constexpr long sRGB          = FormatFlags::IsColorSpace_sRGB;
 static constexpr long Compr         = FormatFlags::IsCompressed;
 static constexpr long Norm          = FormatFlags::IsNormalized;
@@ -38,12 +37,14 @@ static constexpr long Vertex        = FormatFlags::SupportsVertex;
 static constexpr long Dim1D_2D      = Dim1D | Dim2D;
 static constexpr long Dim2D_3D      = Dim2D | Dim3D;
 static constexpr long Dim1D_2D_3D   = Dim1D | Dim2D | Dim3D;
-static constexpr long UInt          = Integer | Unsigned;
 static constexpr long SInt          = Integer;
-static constexpr long UNorm         = UInt | Norm;
-static constexpr long SNorm         = SInt | Norm;
+static constexpr long UInt          = Integer | Unsigned;
+static constexpr long SNorm         = Norm;
+static constexpr long UNorm         = Unsigned | Norm;
 static constexpr long SFloat        = 0;
 static constexpr long UFloat        = Unsigned;
+
+static constexpr long Stencil       = FormatFlags::HasStencil | UInt;
 
 // Declaration of all hardware format descriptors
 static const FormatAttributes g_formatAttribs[] =
@@ -158,16 +159,53 @@ static const FormatAttributes g_formatAttribs[] =
 
     /* --- Block compression (BC) formats --- */
 //   bits  w  h  c  format                     dataType
-    {  64, 4, 4, 4, ImageFormat::BC1,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC1UNorm
-    {  64, 4, 4, 4, ImageFormat::BC1,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC1UNorm_sRGB
-    { 128, 4, 4, 4, ImageFormat::BC2,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC2UNorm
-    { 128, 4, 4, 4, ImageFormat::BC2,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC2UNorm_sRGB
-    { 128, 4, 4, 4, ImageFormat::BC3,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC3UNorm
-    { 128, 4, 4, 4, ImageFormat::BC3,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC3UNorm_sRGB
-    {  64, 4, 4, 1, ImageFormat::BC4,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC4UNorm
-    {  64, 4, 4, 1, ImageFormat::BC4,          DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC4SNorm
-    { 128, 4, 4, 2, ImageFormat::BC5,          DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC5UNorm
-    { 128, 4, 4, 2, ImageFormat::BC5,          DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC5SNorm
+    {  64, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC1UNorm
+    {  64, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC1UNorm_sRGB
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC2UNorm
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC2UNorm_sRGB
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC3UNorm
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC3UNorm_sRGB
+    {  64, 4, 4, 1, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC4UNorm
+    {  64, 4, 4, 1, ImageFormat::Compressed,   DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC4SNorm
+    { 128, 4, 4, 2, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC5UNorm
+    { 128, 4, 4, 2, ImageFormat::Compressed,   DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC5SNorm
+
+    /* --- Advanced scalable texture compression (ASTC) formats --- */
+//   bits  w  h  c  format                     dataType
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC4x4
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC4x4_sRGB
+    { 128, 5, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC5x4
+    { 128, 5, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC5x4_sRGB
+    { 128, 5, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC5x5
+    { 128, 5, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC5x5_sRGB
+    { 128, 6, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC6x5
+    { 128, 6, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC6x5_sRGB
+    { 128, 6, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC6x6
+    { 128, 6, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC6x6_sRGB
+    { 128, 8, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC8x5
+    { 128, 8, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC8x5_sRGB
+    { 128, 8, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC8x6
+    { 128, 8, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC8x6_sRGB
+    { 128, 8, 8, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC8x8
+    { 128, 8, 8, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC8x8_sRGB
+    { 128,10, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC10x5
+    { 128,10, 5, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC10x5_sRGB
+    { 128,10, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC10x6
+    { 128,10, 6, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC10x6_sRGB
+    { 128,10, 8, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC10x8
+    { 128,10, 8, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC10x8_sRGB
+    { 128,10,10, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC10x10
+    { 128,10,10, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC10x10_sRGB
+    { 128,12,10, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC12x10
+    { 128,12,10, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC12x10_sRGB
+    { 128,12,12, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ASTC12x12
+    { 128,12,12, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ASTC12x12_sRGB
+
+    /* --- Ericsson texture compression (ETC) formats --- */
+//   bits  w  h  c  format                     dataType
+    {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ETC1UNorm
+    {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ETC2UNorm
+    {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ETC2UNorm_sRGB
 };
 
 
@@ -209,16 +247,11 @@ LLGL_EXPORT std::uint32_t ImageFormatSize(const ImageFormat imageFormat)
         case ImageFormat::Depth:        return 1;
         case ImageFormat::DepthStencil: return 2;
         case ImageFormat::Stencil:      return 1;
-        case ImageFormat::BC1:          return 0; // no conversion supported yet
-        case ImageFormat::BC2:          return 0; // no conversion supported yet
-        case ImageFormat::BC3:          return 0; // no conversion supported yet
-        case ImageFormat::BC4:          return 0; // no conversion supported yet
-        case ImageFormat::BC5:          return 0; // no conversion supported yet
+        default:                        return 0;
     }
-    return 0;
 }
 
-// Returns the number of bytes per pixel for the specified imagea format and data type
+// Returns the number of bytes per pixel for the specified image format and data type
 static std::uint32_t GetBytesPerPixel(const ImageFormat imageFormat, const DataType dataType)
 {
     if (imageFormat == ImageFormat::DepthStencil)
@@ -241,10 +274,14 @@ LLGL_EXPORT bool IsCompressedFormat(const Format format)
     return ((GetFormatAttribs(format).flags & FormatFlags::IsCompressed) != 0);
 }
 
+LLGL_DEPRECATED_IGNORE_PUSH()
+
 LLGL_EXPORT bool IsCompressedFormat(const ImageFormat imageFormat)
 {
-    return (imageFormat >= ImageFormat::BC1 && imageFormat <= ImageFormat::BC5);
+    return (imageFormat >= ImageFormat::Compressed && imageFormat <= ImageFormat::BC5);
 }
+
+LLGL_DEPRECATED_IGNORE_POP()
 
 LLGL_EXPORT bool IsDepthOrStencilFormat(const Format format)
 {
@@ -284,35 +321,25 @@ LLGL_EXPORT bool IsNormalizedFormat(const Format format)
     return ((GetFormatAttribs(format).flags & FormatFlags::IsNormalized) != 0);
 }
 
+//deprecated
 LLGL_EXPORT bool IsIntegralFormat(const Format format)
 {
-    if (format >= Format::R8UNorm && format <= Format::BGRA8SInt)
-        return !IsFloatFormat(format);
-    else
-        return false;
+    const auto& formatAttribs = GetFormatAttribs(format);
+    return
+    (
+        (formatAttribs.flags & (FormatFlags::IsInteger | FormatFlags::IsNormalized)) != 0 &&
+        (formatAttribs.flags & (FormatFlags::HasDepthStencil | FormatFlags::IsCompressed)) == 0
+    );
 }
 
-//TODO: needs update
+LLGL_EXPORT bool IsIntegerFormat(const Format format)
+{
+    return ((GetFormatAttribs(format).flags & FormatFlags::IsInteger) != 0);
+}
+
 LLGL_EXPORT bool IsFloatFormat(const Format format)
 {
-    switch (format)
-    {
-        case Format::R16Float:
-        case Format::R64Float:
-        case Format::R32Float:
-        case Format::RG16Float:
-        case Format::RG32Float:
-        case Format::RG64Float:
-        case Format::RGB16Float:
-        case Format::RGB32Float:
-        case Format::RGB64Float:
-        case Format::RGBA16Float:
-        case Format::RGBA32Float:
-        case Format::RGBA64Float:
-            return true;
-        default:
-            return false;
-    }
+    return ((GetFormatAttribs(format).flags & FormatFlags::IsInteger) == 0);
 }
 
 LLGL_EXPORT std::uint32_t DataTypeSize(const DataType dataType)

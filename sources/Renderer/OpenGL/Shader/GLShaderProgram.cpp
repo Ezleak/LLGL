@@ -28,7 +28,7 @@ namespace LLGL
 {
 
 
-#ifdef __APPLE__
+#if LLGL_USE_NULL_FRAGMENT_SHADER
 
 // Helper class to manage shared GL objects only necessary workaround issues with Mac implementation of OpenGL.
 class SharedGLShader
@@ -59,7 +59,7 @@ GLuint SharedGLShader::GetOrCreate(GLenum type, const char* source)
 
         /* Check for errors */
         if (!GLLegacyShader::GetCompileStatus(id_))
-            throw std::runtime_error(GLLegacyShader::GetGLShaderLog(id_));
+            LLGL_TRAP("compilation of shared GL shader failed:\n%s", GLLegacyShader::GetGLShaderLog(id_).c_str());
     }
     ++refCount_;
     return id_;
@@ -80,7 +80,7 @@ void SharedGLShader::Release()
 
 static SharedGLShader g_nullFragmentShader;
 
-#endif // /__APPLE__
+#endif // /LLGL_USE_NULL_FRAGMENT_SHADER
 
 GLShaderProgram::GLShaderProgram(
     std::size_t             numShaders,
@@ -110,7 +110,7 @@ GLShaderProgram::~GLShaderProgram()
 {
     glDeleteProgram(GetID());
     GLStateManager::Get().NotifyShaderProgramRelease(this);
-    #ifdef __APPLE__
+    #if LLGL_USE_NULL_FRAGMENT_SHADER
     if (hasNullFragmentShader_)
         g_nullFragmentShader.Release();
     #endif
@@ -179,7 +179,7 @@ void GLShaderProgram::BindAttribLocations(GLuint program, std::size_t numVertexA
 
 void GLShaderProgram::BindFragDataLocations(GLuint program, std::size_t numFragmentAttribs, const GLShaderAttribute* fragmentAttribs)
 {
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL && EXT_gpu_shader4
     /* Only bind if extension is supported, otherwise the sahder won't have multiple fragment outpus anyway */
     if (HasExtension(GLExt::EXT_gpu_shader4))
     {
@@ -194,6 +194,8 @@ void GLShaderProgram::BindFragDataLocations(GLuint program, std::size_t numFragm
 
 static void BuildTransformFeedbackVaryingsEXT(GLuint program, std::size_t numVaryings, const char* const* varyings)
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     if (numVaryings == 0 || varyings == nullptr)
         return;
 
@@ -204,6 +206,8 @@ static void BuildTransformFeedbackVaryingsEXT(GLuint program, std::size_t numVar
         reinterpret_cast<const GLchar* const*>(varyings),
         GL_INTERLEAVED_ATTRIBS
     );
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 }
 
 #ifdef GL_NV_transform_feedback
@@ -220,11 +224,11 @@ static void BuildTransformFeedbackVaryingsNV(GLuint program, std::size_t numVary
     for_range(i, numVaryings)
     {
         /* Get varying location by its name */
-        auto location = glGetVaryingLocationNV(program, varyings[i]);
+        GLint location = glGetVaryingLocationNV(program, varyings[i]);
         if (location >= 0)
             varyingLocations.push_back(location);
         else
-            throw std::invalid_argument("stream-output attribute \"" + std::string(varyings[i]) + "\" does not specify an active varying in GLSL shader program");
+            LLGL_TRAP("stream-output attribute \"%s\" does not specify an active varying in GL shader program (ID=%u)", varyings[i], program);
     }
 
     glTransformFeedbackVaryingsNV(
@@ -324,6 +328,7 @@ static GLMatrixTypeFormat UnmapAttribType(GLenum type)
         case GL_INT_VEC3:           return { Format::RGB32SInt,     1 };
         case GL_INT_VEC4:           return { Format::RGBA32SInt,    1 };
         case GL_UNSIGNED_INT:       return { Format::R32UInt,       1 };
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case GL_UNSIGNED_INT_VEC2:  return { Format::RG32UInt,      1 };
         case GL_UNSIGNED_INT_VEC3:  return { Format::RGB32UInt,     1 };
         case GL_UNSIGNED_INT_VEC4:  return { Format::RGBA32UInt,    1 };
@@ -342,6 +347,7 @@ static GLMatrixTypeFormat UnmapAttribType(GLenum type)
         case GL_DOUBLE_MAT4x2:      return { Format::RG64Float,     4 };
         case GL_DOUBLE_MAT4x3:      return { Format::RGB64Float,    4 };
         #endif // /LLGL_OPENGL
+        #endif // /!LLGL_GL_ENABLE_OPENGL2X
     }
     return { Format::R32Float, 0 };
 }
@@ -464,6 +470,8 @@ static void GLQueryVertexAttributes(GLuint program, ShaderReflection& reflection
 
 static void GLQueryStreamOutputAttributes(GLuint program, ShaderReflection& reflection)
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     VertexAttribute soAttrib;
 
     #ifndef __APPLE__
@@ -534,9 +542,11 @@ static void GLQueryStreamOutputAttributes(GLuint program, ShaderReflection& refl
         }
     }
     #endif
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 }
 
-#ifdef GL_ARB_program_interface_query
+#ifdef LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
 
 static bool GLGetProgramResourceProperties(
     GLuint          program,
@@ -620,10 +630,12 @@ static void GLQueryBufferProperties(GLuint program, ShaderResourceReflection& re
     }
 }
 
-#endif // /GL_ARB_program_interface_query
+#endif // /LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
 
 static void GLQueryConstantBuffers(GLuint program, ShaderReflection& reflection)
 {
+    #if LLGL_GLEXT_UNIFORM_BUFFER_OBJECT
+
     if (!HasExtension(GLExt::ARB_uniform_buffer_object))
         return;
 
@@ -653,7 +665,7 @@ static void GLQueryConstantBuffers(GLuint program, ShaderReflection& reflection)
             glGetActiveUniformBlockiv(program, i, GL_UNIFORM_BLOCK_DATA_SIZE, &blockSize);
             resource.constantBufferSize = static_cast<std::uint32_t>(blockSize);
 
-            #ifdef GL_ARB_program_interface_query
+            #ifdef LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
             /* Query resource view properties */
             GLQueryBufferProperties(program, resource, GL_UNIFORM_BLOCK, i);
             #else
@@ -664,11 +676,13 @@ static void GLQueryConstantBuffers(GLuint program, ShaderReflection& reflection)
         }
         reflection.resources.push_back(resource);
     }
+
+    #endif // /LLGL_GLEXT_UNIFORM_BUFFER_OBJECT
 }
 
 static void GLQueryStorageBuffers(GLuint program, ShaderReflection& reflection)
 {
-    #ifdef LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
+    #if LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
 
     if (!HasExtension(GLExt::ARB_shader_storage_buffer_object) || !HasExtension(GLExt::ARB_program_interface_query))
         return;
@@ -701,8 +715,14 @@ static void GLQueryStorageBuffers(GLuint program, ShaderReflection& reflection)
             glGetProgramResourceName(program, GL_SHADER_STORAGE_BLOCK, i, maxNameLength, &nameLength, blockName.data());
             resource.binding.name = std::string(blockName.data());
 
+            #ifdef LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
             /* Query resource view properties */
             GLQueryBufferProperties(program, resource, GL_SHADER_STORAGE_BLOCK, i);
+            #else
+            /* Set binding slot to invalid index */
+            resource.binding.stageFlags = StageFlags::AllStages;
+            resource.binding.slot       = LLGL_INVALID_SLOT;
+            #endif
         }
         reflection.resources.push_back(resource);
     }
@@ -753,7 +773,7 @@ static void GLQueryUniforms(GLuint program, ShaderReflection& reflection)
 
                 resource.binding.slot = static_cast<std::uint32_t>(uniformValue);
 
-                #ifdef GL_ARB_program_interface_query
+                #ifdef LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
                 /* Query resource properties */
                 const GLenum props[] =
                 {
@@ -774,7 +794,7 @@ static void GLQueryUniforms(GLuint program, ShaderReflection& reflection)
                     resource.binding.arraySize  = static_cast<std::uint32_t>(params[6]);
                 }
                 else
-                #endif // /GL_ARB_program_interface_query
+                #endif // /LLGL_GLEXT_PROGRAM_INTERFACE_QUERY
                 {
                     /* Set binding slot to invalid index */
                     resource.binding.stageFlags = StageFlags::AllStages;
@@ -840,6 +860,7 @@ void GLShaderProgram::QueryReflection(GLuint program, GLenum shaderStage, Shader
 struct GLOrderedShaders
 {
     const GLShader* vertexShader                = nullptr;
+    const GLShader* tessEvaluationShader        = nullptr;
     const GLShader* geometryShader              = nullptr;
     const GLShader* fragmentShader              = nullptr;
     const GLShader* shaderWithFlippedYPosition  = nullptr; // Last shader that modifies gl_Position (vertex, tessellation-evaluation, or geometry)
@@ -875,6 +896,9 @@ static void AttachGLLegacyShaders(
                 case ShaderType::Vertex:
                     orderedShaders.vertexShader = shaderGL;
                     break;
+                case ShaderType::TessEvaluation:
+                    orderedShaders.tessEvaluationShader = shaderGL;
+                    break;
                 case ShaderType::Geometry:
                     orderedShaders.geometryShader = shaderGL;
                     break;
@@ -902,7 +926,7 @@ void GLShaderProgram::BuildProgramBinary(
     /* Attach all specified shaders to this shader program */
     AttachGLLegacyShaders(GetID(), numShaders, shaders, orderedShaders);
 
-    #ifdef __APPLE__
+    #if LLGL_USE_NULL_FRAGMENT_SHADER
     /*
     Mac implementation of OpenGL violates GL spec and always requires a fragment shader,
     so we create a dummy if not specified by client.
@@ -910,10 +934,10 @@ void GLShaderProgram::BuildProgramBinary(
     if (orderedShaders.fragmentShader == nullptr)
     {
         const GLchar* nullFragmentShaderSource =
-            #ifdef LLGL_OPENGLES3
-            "#version 300 es\n"
-            #else
+            #ifdef LLGL_OPENGL
             "#version 330 core\n"
+            #else
+            "#version 300 es\n"
             #endif
             "void main() {}\n"
         ;
@@ -921,7 +945,7 @@ void GLShaderProgram::BuildProgramBinary(
         glAttachShader(GetID(), nullFragmentShader);
         hasNullFragmentShader_ = true;
     }
-    #endif
+    #endif // /LLGL_USE_NULL_FRAGMENT_SHADER
 
     /* Build input layout for vertex shader */
     if (const GLShader* vs = orderedShaders.vertexShader)
@@ -938,6 +962,11 @@ void GLShaderProgram::BuildProgramBinary(
     {
         if (!gs->GetTransformFeedbackVaryings().empty())
             shaderWithVaryings = gs;
+    }
+    else if (const GLShader* ts = orderedShaders.tessEvaluationShader)
+    {
+        if (!ts->GetTransformFeedbackVaryings().empty())
+            shaderWithVaryings = ts;
     }
     else if (const GLShader* vs = orderedShaders.vertexShader)
     {

@@ -13,7 +13,7 @@
 #endif
 
 // Enables custom render pass to clear at the begin of a render pass section (more efficient)
-#define ENABLE_CUSTOM_RENDER_PASS
+#define ENABLE_CUSTOM_RENDER_PASS 1
 
 
 class Example_PostProcessing : public ExampleBase
@@ -59,7 +59,7 @@ class Example_PostProcessing : public ExampleBase
     LLGL::RenderTarget*     renderTargetBlurX   = nullptr;
     LLGL::RenderTarget*     renderTargetBlurY   = nullptr;
 
-    #ifdef ENABLE_CUSTOM_RENDER_PASS
+    #if ENABLE_CUSTOM_RENDER_PASS
     LLGL::RenderPass*       renderPassScene     = nullptr;
     #endif
 
@@ -81,6 +81,13 @@ class Example_PostProcessing : public ExampleBase
     }
     blurSettings;
 
+    struct Animation
+    {
+        Gs::Matrix4f    rotation;
+        float           innerModelRotation = 0.0f;
+    }
+    animation;
+
 public:
 
     Example_PostProcessing() :
@@ -92,7 +99,7 @@ public:
         CreateSamplers();
         CreateTextures();
         CreateRenderTargets();
-        #ifdef ENABLE_CUSTOM_RENDER_PASS
+        #if ENABLE_CUSTOM_RENDER_PASS
         CreateRenderPasses();
         #endif
         CreatePipelineLayouts();
@@ -161,7 +168,7 @@ public:
 
             // Load final shader program
             shaderPipelineFinal.vs = LoadShader({ LLGL::ShaderType::Vertex,   "PostProcess.vert" });
-            shaderPipelineFinal.ps = LoadShader({ LLGL::ShaderType::Fragment, "Final.frag" });
+            shaderPipelineFinal.ps = LoadShader({ LLGL::ShaderType::Fragment, "Final.frag"       });
         }
         else if (Supported(LLGL::ShadingLanguage::SPIRV))
         {
@@ -275,7 +282,7 @@ public:
         renderTargetBlurY = renderer->CreateRenderTarget(renderTargetBlurYDesc);
     }
 
-    #ifdef ENABLE_CUSTOM_RENDER_PASS
+    #if ENABLE_CUSTOM_RENDER_PASS
 
     void CreateRenderPasses()
     {
@@ -330,6 +337,7 @@ public:
             pipelineDescScene.rasterizer.multiSampleEnabled = (GetSampleCount() > 1);
         }
         pipelineScene = renderer->CreatePipelineState(pipelineDescScene);
+        ReportPSOErrors(pipelineScene);
 
         // Create graphics pipeline for blur post-processor
         LLGL::GraphicsPipelineDescriptor pipelineDescPP;
@@ -340,6 +348,7 @@ public:
             pipelineDescPP.pipelineLayout   = layoutBlur;
         }
         pipelineBlur = renderer->CreatePipelineState(pipelineDescPP);
+        ReportPSOErrors(pipelineBlur);
 
         // Create graphics pipeline for final post-processor
         LLGL::GraphicsPipelineDescriptor pipelineDescFinal;
@@ -351,6 +360,7 @@ public:
             pipelineDescFinal.rasterizer.multiSampleEnabled = (GetSampleCount() > 1);
         }
         pipelineFinal = renderer->CreatePipelineState(pipelineDescFinal);
+        ReportPSOErrors(pipelineFinal);
     }
 
     void CreateResourceHeaps()
@@ -428,17 +438,15 @@ private:
     void SetSceneSettingsOuterModel(float deltaPitch, float deltaYaw)
     {
         // Rotate model around X and Y axes
-        static Gs::Matrix4f rotation;
-
         Gs::Matrix4f deltaRotation;
         Gs::RotateFree(deltaRotation, { 1, 0, 0 }, deltaPitch);
         Gs::RotateFree(deltaRotation, { 0, 1, 0 }, deltaYaw);
-        rotation = deltaRotation * rotation;
+        animation.rotation = deltaRotation * animation.rotation;
 
         // Transform scene mesh
         sceneSettings.wMatrix.LoadIdentity();
         Gs::Translate(sceneSettings.wMatrix, { 0, 0, 5 });
-        sceneSettings.wMatrix *= rotation;
+        sceneSettings.wMatrix *= animation.rotation;
 
         // Set colors and matrix
         sceneSettings.diffuse       = { 0.6f, 0.6f, 0.6f, 1.0f };
@@ -484,8 +492,7 @@ private:
         #endif
 
         // Update rotation of inner model
-        static float innerModelRotation;
-        innerModelRotation += 0.01f;
+        animation.innerModelRotation += 0.01f;
 
         // Update rotation of outer model
         Gs::Vector2f mouseMotion
@@ -517,7 +524,7 @@ private:
             // Set graphics pipeline and vertex buffer for scene rendering
             commands->SetVertexBuffer(*vertexBufferScene);
 
-            #ifdef ENABLE_CUSTOM_RENDER_PASS
+            #if ENABLE_CUSTOM_RENDER_PASS
 
             // Clear scene render target with render pass and initial clear values
             LLGL::ClearValue clearValues[3];
@@ -540,7 +547,7 @@ private:
                 // Set viewport to full size
                 commands->SetViewport(viewportFull);
 
-                #ifndef ENABLE_CUSTOM_RENDER_PASS
+                #if !ENABLE_CUSTOM_RENDER_PASS
 
                 // Clear individual buffers in render target (color, glossiness, depth)
                 constexpr float glossinessColor[4] = { 0, 0, 0, 0 };
@@ -563,7 +570,7 @@ private:
                 commands->Draw(numSceneVertices, 0);
 
                 // Draw inner scene model
-                SetSceneSettingsInnerModel(innerModelRotation);
+                SetSceneSettingsInnerModel(animation.innerModelRotation);
                 commands->Draw(numSceneVertices, 0);
             }
             commands->EndRenderPass();

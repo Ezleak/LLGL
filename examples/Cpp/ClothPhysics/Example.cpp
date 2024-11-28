@@ -137,8 +137,10 @@ public:
         particleBuffers[AttribNormal  ]->SetDebugName("Particles.Normal");
 
         // Show some information
-        std::cout << "press LEFT MOUSE BUTTON and move the mouse to rotate the camera" << std::endl;
-        std::cout << "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to change the cloth stiffness" << std::endl;
+        LLGL::Log::Printf(
+            "press LEFT MOUSE BUTTON and move the mouse to rotate the camera\n"
+            "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to change the cloth stiffness\n"
+        );
     }
 
     // Generates the grid geometry for the cloth with triangle strip topology
@@ -161,7 +163,7 @@ public:
             {
                 const auto idx = v * (clothSegmentsU + 1) + u;
 
-                // Set mass for left and righ top particles to infinity to create suspension points
+                // Set mass for left and right top particles to infinity to create suspension points
                 bool isSuspensionPoint = (v == 0 && (u == 0 || u == clothSegmentsU));
 
                 // Initialize base attributes
@@ -365,6 +367,12 @@ public:
             computeShaders[1] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSStretchConstraints.comp" });
             computeShaders[2] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSRelaxation.comp"         });
         }
+        else if (Supported(LLGL::ShadingLanguage::ESSL))
+        {
+            computeShaders[0] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSForces.comp",             "", "310 es" });
+            computeShaders[1] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSStretchConstraints.comp", "", "310 es" });
+            computeShaders[2] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSRelaxation.comp",         "", "310 es" });
+        }
         else if (Supported(LLGL::ShadingLanguage::SPIRV))
         {
             computeShaders[0] = LoadShader({ LLGL::ShaderType::Compute, "Example.CSForces.450core.comp.spv"             });
@@ -432,7 +440,7 @@ public:
                 pipelineDesc.computeShader  = computeShaders[i];
             }
             computePipelines[i] = renderer->CreatePipelineState(pipelineDesc);
-            ThrowIfFailed(computePipelines[i]);
+            ReportPSOErrors(computePipelines[i]);
         }
     }
 
@@ -448,7 +456,7 @@ public:
             graphicsShaderPipeline.vs = LoadShader({ LLGL::ShaderType::Vertex,   "Example.hlsl", "VS", "vs_5_0" }, usedVertexFormats, {}, g_shaderMacros);
             graphicsShaderPipeline.ps = LoadShader({ LLGL::ShaderType::Fragment, "Example.hlsl", "PS", "ps_5_0" }, {}, g_shaderMacros);
         }
-        else if (Supported(LLGL::ShadingLanguage::GLSL))
+        else if (Supported(LLGL::ShadingLanguage::GLSL) || Supported(LLGL::ShadingLanguage::ESSL))
         {
             graphicsShaderPipeline.vs = LoadShader({ LLGL::ShaderType::Vertex,   "Example.VS.vert" }, usedVertexFormats, {}, g_shaderMacros);
             graphicsShaderPipeline.ps = LoadShader({ LLGL::ShaderType::Fragment, "Example.PS.frag" }, {}, g_shaderMacros);
@@ -500,7 +508,7 @@ public:
             #endif
         }
         graphicsPipeline = renderer->CreatePipelineState(pipelineDesc);
-        ThrowIfFailed(graphicsPipeline);
+        ReportPSOErrors(graphicsPipeline);
 
         // Create resource heaps for graphics pipeline
         const LLGL::ResourceViewDescriptor resourceViewsGraphics[] =
@@ -540,8 +548,8 @@ private:
         {
             float delta = motion.x*0.01f;
             stiffnessFactor = std::max(0.5f, std::min(stiffnessFactor + delta, 1.0f));
-            std::cout << "stiffness: " << static_cast<int>(stiffnessFactor * 100.0f) << "%    \r";
-            std::flush(std::cout);
+            LLGL::Log::Printf("stiffness: %d%%    \r", static_cast<int>(stiffnessFactor * 100.0f));
+            ::fflush(stdout);
         }
 
         // Update timer

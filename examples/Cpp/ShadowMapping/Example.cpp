@@ -65,9 +65,11 @@ public:
 
         #if 0
         // Show some information
-        std::cout << "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube" << std::endl;
-        std::cout << "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube" << std::endl;
-        std::cout << "press RETURN KEY to save the render target texture to a PNG file" << std::endl;
+        LLGL::Log::Printf(
+            "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube\n"
+            "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube\n"
+            "press RETURN KEY to save the render target texture to a PNG file\n"
+        );
         #endif
     }
 
@@ -98,7 +100,7 @@ private:
     void LoadShaders(const LLGL::VertexFormat& vertexFormat)
     {
         // Load shader program
-        if (Supported(LLGL::ShadingLanguage::GLSL))
+        if (Supported(LLGL::ShadingLanguage::GLSL) || Supported(LLGL::ShadingLanguage::ESSL))
         {
             vsShadowMap = LoadShaderAndPatchClippingOrigin({ LLGL::ShaderType::Vertex, "ShadowMap.vert" }, { vertexFormat });
 
@@ -161,13 +163,24 @@ private:
         // Initialize shadow-map sampler
         LLGL::SamplerDescriptor shadowSamplerDesc;
         {
-            shadowSamplerDesc.addressModeU      = LLGL::SamplerAddressMode::Border;
-            shadowSamplerDesc.addressModeV      = LLGL::SamplerAddressMode::Border;
-            shadowSamplerDesc.addressModeW      = LLGL::SamplerAddressMode::Border;
-            shadowSamplerDesc.borderColor[0]    = 1.0f;
-            shadowSamplerDesc.borderColor[1]    = 1.0f;
-            shadowSamplerDesc.borderColor[2]    = 1.0f;
-            shadowSamplerDesc.borderColor[3]    = 1.0f;
+            // Clamp-to-border sampler address mode requires GLES 3.2, so use standard clamp mode in case hardware only supports GLES 3.0
+            if (renderer->GetRendererID() == LLGL::RendererID::OpenGLES ||
+                renderer->GetRendererID() == LLGL::RendererID::WebGL)
+            {
+                shadowSamplerDesc.addressModeU      = LLGL::SamplerAddressMode::Clamp;
+                shadowSamplerDesc.addressModeV      = LLGL::SamplerAddressMode::Clamp;
+                shadowSamplerDesc.addressModeW      = LLGL::SamplerAddressMode::Clamp;
+            }
+            else
+            {
+                shadowSamplerDesc.addressModeU      = LLGL::SamplerAddressMode::Border;
+                shadowSamplerDesc.addressModeV      = LLGL::SamplerAddressMode::Border;
+                shadowSamplerDesc.addressModeW      = LLGL::SamplerAddressMode::Border;
+                shadowSamplerDesc.borderColor[0]    = 1.0f;
+                shadowSamplerDesc.borderColor[1]    = 1.0f;
+                shadowSamplerDesc.borderColor[2]    = 1.0f;
+                shadowSamplerDesc.borderColor[3]    = 1.0f;
+            }
             shadowSamplerDesc.compareEnabled    = true;
             shadowSamplerDesc.mipMapEnabled     = false;
         }
@@ -219,6 +232,7 @@ private:
                 pipelineDesc.viewports                              = { shadowMapResolution };
             }
             pipelineShadowMap = renderer->CreatePipelineState(pipelineDesc);
+            ReportPSOErrors(pipelineShadowMap);
         }
 
         // Create graphics pipeline for scene rendering
@@ -235,6 +249,7 @@ private:
                 pipelineDesc.rasterizer.multiSampleEnabled  = (GetSampleCount() > 1);
             }
             pipelineScene = renderer->CreatePipelineState(pipelineDesc);
+            ReportPSOErrors(pipelineScene);
         }
     }
 

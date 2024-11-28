@@ -10,10 +10,9 @@
 #include <fstream>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <sstream>
 #include <type_traits>
 #include <algorithm>
+#include <LLGL/Log.h>
 
 
 static const std::uint32_t ddsMagicNumber = 0x20534444; // 'DDS '
@@ -133,21 +132,22 @@ T ReadValue(std::istream& stream)
     return value;
 }
 
-void DDSImageReader::LoadFromFile(const std::string& filename)
+bool DDSImageReader::LoadFromFile(const std::string& filename)
 {
     // Open file for reading
-    const std::string path = FindResourcePath(filename);
-    std::ifstream file(path, std::ios::binary);
-    if (!file.good())
-        throw std::runtime_error("failed to load DDS image from file: " + path);
+    AssetReader reader = ReadAsset(filename);
+    if (!reader)
+        return false;
 
     // Read magic number
-    if (ReadValue<std::int32_t>(file) != ddsMagicNumber)
-        throw std::runtime_error("invalid magic number in DDS image: " + path);
+    if (reader.Read<std::int32_t>() != ddsMagicNumber)
+    {
+        LLGL::Log::Errorf("invalid magic number in DDS image: %s\n", filename.c_str());
+        return false;
+    }
 
-    // Rerad DDS header
-    DDSHeader header;
-    ReadValue(file, header);
+    // Read DDS header
+    DDSHeader header = reader.Read<DDSHeader>();
 
     DDSHeaderDX10 headerDX10;
     ::memset(&headerDX10, 0, sizeof(headerDX10));
@@ -209,18 +209,16 @@ void DDSImageReader::LoadFromFile(const std::string& filename)
     /*else if (IsFourCC("DX10"))
     {
         // Read header extension
-        ReadValue(file, headerDX10);
+        (void)reader.Read<headerDX10>();
         hasDX10Header = true;
     }*/
     else
     {
         // Print error with FourCC as string
-        char fourCC[4] = {};
-        ::memcpy(fourCC, &(header.format.fourCC), sizeof(fourCC));
+        char fourCC[5] = {};
+        ::memcpy(fourCC, &(header.format.fourCC), sizeof(header.format.fourCC));
 
-        std::stringstream err;
-        err << "DDS image has unsupported FourCC value: " << fourCC[0] << fourCC[1] << fourCC[2] << fourCC[3];
-        throw std::runtime_error(err.str());
+        throw std::runtime_error("DDS image has unsupported FourCC value: " + std::string(fourCC));
     }
 
     // Read image buffer
@@ -248,7 +246,9 @@ void DDSImageReader::LoadFromFile(const std::string& filename)
 
     data_.resize(bufferSize);
 
-    file.read(data_.data(), static_cast<std::streamsize>(data_.size()));
+    reader.Read(data_.data(), static_cast<std::streamsize>(data_.size()));
+
+    return true;
 }
 
 LLGL::ImageView DDSImageReader::GetImageView(std::uint32_t mipLevel) const

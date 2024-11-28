@@ -16,9 +16,9 @@
 #include <stdint.h>
 #include <LLGL-C/Types.h>
 
-#if defined LLGL_OS_ANDROID
+#if __ANDROID__
 #   include <android_native_app_glue.h>
-#endif /* defined LLGL_OS_ANDROID */
+#endif /* __ANDROID__ */
 
 
 /* ----- Constants ----- */
@@ -26,19 +26,30 @@
 #define LLGL_RENDERERID_UNDEFINED   ( 0x00000000 )
 #define LLGL_RENDERERID_NULL        ( 0x00000001 )
 #define LLGL_RENDERERID_OPENGL      ( 0x00000002 )
-#define LLGL_RENDERERID_OPENGLES1   ( 0x00000003 )
-#define LLGL_RENDERERID_OPENGLES2   ( 0x00000004 )
-#define LLGL_RENDERERID_OPENGLES3   ( 0x00000005 )
+#define LLGL_RENDERERID_OPENGLES    ( 0x00000003 )
+#define LLGL_RENDERERID_WEBGL       ( 0x00000004 )
+#define LLGL_RENDERERID_WEBGPU      ( 0x00000005 )
 #define LLGL_RENDERERID_DIRECT3D9   ( 0x00000006 )
 #define LLGL_RENDERERID_DIRECT3D10  ( 0x00000007 )
 #define LLGL_RENDERERID_DIRECT3D11  ( 0x00000008 )
 #define LLGL_RENDERERID_DIRECT3D12  ( 0x00000009 )
 #define LLGL_RENDERERID_VULKAN      ( 0x0000000A )
 #define LLGL_RENDERERID_METAL       ( 0x0000000B )
+#define LLGL_RENDERERID_OPENGLES1   ( LLGL_RENDERERID_OPENGLES )
+#define LLGL_RENDERERID_OPENGLES2   ( LLGL_RENDERERID_OPENGLES )
+#define LLGL_RENDERERID_OPENGLES3   ( LLGL_RENDERERID_OPENGLES )
 #define LLGL_RENDERERID_RESERVED    ( 0x000000FF )
 
 
 /* ----- Enumerations ----- */
+
+typedef enum LLGLEventAction
+{
+    LLGLEventActionBegan,
+    LLGLEventActionChanged,
+    LLGLEventActionEnded,
+}
+LLGLEventAction;
 
 typedef enum LLGLRenderConditionMode
 {
@@ -142,6 +153,37 @@ typedef enum LLGLFormat
     LLGLFormatBC4SNorm,
     LLGLFormatBC5UNorm,
     LLGLFormatBC5SNorm,
+    LLGLFormatASTC4x4,
+    LLGLFormatASTC4x4_sRGB,
+    LLGLFormatASTC5x4,
+    LLGLFormatASTC5x4_sRGB,
+    LLGLFormatASTC5x5,
+    LLGLFormatASTC5x5_sRGB,
+    LLGLFormatASTC6x5,
+    LLGLFormatASTC6x5_sRGB,
+    LLGLFormatASTC6x6,
+    LLGLFormatASTC6x6_sRGB,
+    LLGLFormatASTC8x5,
+    LLGLFormatASTC8x5_sRGB,
+    LLGLFormatASTC8x6,
+    LLGLFormatASTC8x6_sRGB,
+    LLGLFormatASTC8x8,
+    LLGLFormatASTC8x8_sRGB,
+    LLGLFormatASTC10x5,
+    LLGLFormatASTC10x5_sRGB,
+    LLGLFormatASTC10x6,
+    LLGLFormatASTC10x6_sRGB,
+    LLGLFormatASTC10x8,
+    LLGLFormatASTC10x8_sRGB,
+    LLGLFormatASTC10x10,
+    LLGLFormatASTC10x10_sRGB,
+    LLGLFormatASTC12x10,
+    LLGLFormatASTC12x10_sRGB,
+    LLGLFormatASTC12x12,
+    LLGLFormatASTC12x12_sRGB,
+    LLGLFormatETC1UNorm,
+    LLGLFormatETC2UNorm,
+    LLGLFormatETC2UNorm_sRGB,
 }
 LLGLFormat;
 
@@ -159,6 +201,7 @@ typedef enum LLGLImageFormat
     LLGLImageFormatDepth,
     LLGLImageFormatDepthStencil,
     LLGLImageFormatStencil,
+    LLGLImageFormatCompressed,
     LLGLImageFormatBC1,
     LLGLImageFormatBC2,
     LLGLImageFormatBC3,
@@ -1062,8 +1105,10 @@ LLGLQueryPipelineStatistics;
 
 typedef struct LLGLProfileTimeRecord
 {
-    const char* annotation;  /* = "" */
-    uint64_t    elapsedTime; /* = 0 */
+    const char* annotation;    /* = "" */
+    uint64_t    cpuTicksStart; /* = 0 */
+    uint64_t    cpuTicksEnd;   /* = 0 */
+    uint64_t    elapsedTime;   /* = 0 */
 }
 LLGLProfileTimeRecord;
 
@@ -1424,9 +1469,9 @@ typedef struct LLGLRenderSystemDescriptor
     size_t                rendererConfigSize; /* = 0 */
     const void*           nativeHandle;       /* = NULL */
     size_t                nativeHandleSize;   /* = 0 */
-#if defined LLGL_OS_ANDROID
-    android_app*          androidApp;
-#endif /* defined LLGL_OS_ANDROID */
+#if __ANDROID__
+    struct android_app*   androidApp;         /* = NULL */
+#endif /* __ANDROID__ */
 }
 LLGLRenderSystemDescriptor;
 

@@ -12,9 +12,10 @@
 #include <LLGL/PipelineLayout.h>
 #include <LLGL/PipelineLayoutFlags.h>
 #include <LLGL/Container/ArrayView.h>
+#include <LLGL/Container/DynamicVector.h>
 #include "GLResourceType.h"
 #include "../Texture/GLSampler.h"
-#include "../Texture/GL2XSampler.h"
+#include "../Texture/GLEmulatedSampler.h"
 #include <vector>
 
 
@@ -46,7 +47,7 @@ class GLPipelineLayout final : public PipelineLayout
         void BindStaticSamplers(GLStateManager& stateMngr) const;
 
         // Returns the copied list of heap binding descriptors.
-        inline const std::vector<BindingDescriptor>& GetHeapBindings() const
+        inline const DynamicVector<BindingDescriptor>& GetHeapBindings() const
         {
             return heapBindings_;
         }
@@ -101,13 +102,11 @@ class GLPipelineLayout final : public PipelineLayout
     private:
 
         std::vector<std::string>                resourceNames_; // Dynamic resource and static sampler names; Used by GLShaderBindingLayout
-        std::vector<BindingDescriptor>          heapBindings_;
+        DynamicVector<BindingDescriptor>        heapBindings_;
         std::vector<GLPipelineResourceBinding>  bindings_;
         std::vector<GLuint>                     staticSamplerSlots_;
         std::vector<GLSamplerPtr>               staticSamplers_;
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        std::vector<GL2XSamplerPtr>             staticSamplersGL2X_;
-        #endif
+        std::vector<GLEmulatedSamplerPtr>       staticEmulatedSamplers_;
         std::vector<UniformDescriptor>          uniforms_;
         const GLbitfield                        barriers_           = 0;
         const bool                              hasNamedBindings_   = false;

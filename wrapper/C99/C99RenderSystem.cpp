@@ -234,6 +234,7 @@ static void ConvertBufferDesc(BufferDescriptor& dst, SmallVector<VertexAttribute
     for_range(i, src.numVertexAttribs)
         ConvertVertexAttrib(dstVertexAttribs[i], src.vertexAttribs[i]);
 
+    dst.debugName       = src.debugName;
     dst.size            = src.size;
     dst.stride          = src.stride;
     dst.format          = (Format)src.format;
@@ -532,6 +533,7 @@ LLGL_C_EXPORT void llglReleasePipelineCache(LLGLPipelineCache pipelineCache)
 
 static void ConvertGraphicsPipelineDesc(GraphicsPipelineDescriptor& dst, const LLGLGraphicsPipelineDescriptor& src)
 {
+    dst.debugName               = src.debugName;
     dst.pipelineLayout          = LLGL_PTR(PipelineLayout, src.pipelineLayout);
     dst.renderPass              = LLGL_PTR(RenderPass, src.renderPass);
     dst.vertexShader            = LLGL_PTR(Shader, src.vertexShader);
@@ -571,6 +573,7 @@ LLGL_C_EXPORT LLGLPipelineState llglCreateGraphicsPipelineStateExt(const LLGLGra
 
 static void ConvertComputePipelineDesc(ComputePipelineDescriptor& dst, const LLGLComputePipelineDescriptor& src)
 {
+    dst.debugName       = src.debugName;
     dst.pipelineLayout  = LLGL_PTR(PipelineLayout, src.pipelineLayout);
     dst.computeShader   = LLGL_PTR(Shader, src.computeShader);
 }

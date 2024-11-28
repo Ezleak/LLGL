@@ -8,6 +8,7 @@
 #include "D3D12RootParameter.h"
 #include <LLGL/ShaderFlags.h>
 #include <LLGL/PipelineLayoutFlags.h>
+#include "../../../Core/CoreUtils.h"
 
 
 namespace LLGL
@@ -78,11 +79,25 @@ void D3D12RootParameter::InitAsDescriptorTable(UINT maxNumDescriptorRanges, D3D1
     managedRootParam_->ShaderVisibility                     = visibility;
 }
 
+static bool IsIncludedInDescriptorRange(const D3D12_DESCRIPTOR_RANGE& descRange, D3D12_DESCRIPTOR_RANGE_TYPE rangeType, UINT baseShaderRegister, UINT registerSpace)
+{
+    return
+    (
+        rangeType          == descRange.RangeType &&
+        registerSpace      == descRange.RegisterSpace &&
+        baseShaderRegister >= descRange.BaseShaderRegister &&
+        baseShaderRegister <  descRange.BaseShaderRegister + descRange.NumDescriptors
+    );
+}
+
 void D3D12RootParameter::AppendDescriptorTableRange(D3D12_DESCRIPTOR_RANGE_TYPE rangeType, UINT baseShaderRegister, UINT numDescriptors, UINT registerSpace)
 {
+    /* Ignore this call if the input is already included in the current range */
+    if (!descRanges_.empty() && IsIncludedInDescriptorRange(descRanges_.back(), rangeType, baseShaderRegister, registerSpace))
+        return;
+
     /* Add new descriptor range to array */
-    descRanges_.resize(descRanges_.size() + 1);
-    auto& descRange = descRanges_.back();
+    D3D12_DESCRIPTOR_RANGE& descRange = AppendElementNoRealloc(descRanges_);
 
     /* Initialize descriptor range */
     descRange.RangeType                         = rangeType;
@@ -98,6 +113,12 @@ void D3D12RootParameter::AppendDescriptorTableRange(D3D12_DESCRIPTOR_RANGE_TYPE 
 void D3D12RootParameter::AppendDescriptorTableRange(D3D12_DESCRIPTOR_RANGE_TYPE rangeType, const BindingSlot& slot, UINT numDescriptors)
 {
     AppendDescriptorTableRange(rangeType, slot.index, numDescriptors, slot.set);
+}
+
+void D3D12RootParameter::IncludeShaderVisibility(D3D12_SHADER_VISIBILITY visibility)
+{
+    if (managedRootParam_->ShaderVisibility != visibility)
+        managedRootParam_->ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 }
 
 void D3D12RootParameter::Clear()
@@ -128,14 +149,16 @@ bool D3D12RootParameter::IsCompatible(D3D12_ROOT_PARAMETER_TYPE rootParamType, D
     return AreRangeTypesCompatible(descRanges_.back().RangeType, rangeType);
 }
 
-bool D3D12RootParameter::IsCompatible(const D3D12_ROOT_CONSTANTS& rootConstants) const
+bool D3D12RootParameter::IsCompatible(const D3D12_ROOT_CONSTANTS& rootConstants, D3D12_SHADER_VISIBILITY visibility) const
 {
     return
     (
         managedRootParam_                           != nullptr                                      &&
         managedRootParam_->ParameterType            == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS    &&
         managedRootParam_->Constants.ShaderRegister == rootConstants.ShaderRegister                 &&
-        managedRootParam_->Constants.RegisterSpace  == rootConstants.RegisterSpace
+        managedRootParam_->Constants.RegisterSpace  == rootConstants.RegisterSpace                  &&
+      //managedRootParam_->Constants.Num32BitValues == rootConstants.Num32BitValues                 &&
+        managedRootParam_->ShaderVisibility         == visibility
     );
 }
 

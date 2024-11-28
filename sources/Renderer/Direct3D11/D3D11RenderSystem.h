@@ -102,6 +102,10 @@ class D3D11RenderSystem final : public RenderSystem
 
     private:
 
+        #include <LLGL/Backend/RenderSystem.Internal.inl>
+
+    private:
+
         void CreateFactory();
         void QueryVideoAdapters(long flags, ComPtr<IDXGIAdapter>& outPreferredAdatper);
         HRESULT CreateDevice(IDXGIAdapter* adapter, bool debugDevice = false);
@@ -110,8 +114,8 @@ class D3D11RenderSystem final : public RenderSystem
         void QueryDXDeviceVersion();
         void CreateStateManagerAndCommandQueue();
 
-        void QueryRendererInfo();
-        void QueryRenderingCaps();
+        void QueryRendererInfo(RendererInfo& outInfo);
+        void QueryRenderingCaps(RenderingCapabilities& outCaps);
 
         // Returns the minor version of Direct3D 11.X.
         int GetMinorVersion() const;
@@ -125,6 +129,8 @@ class D3D11RenderSystem final : public RenderSystem
         #if LLGL_D3D11_ENABLE_FEATURELEVEL >= 3
         bool CheckFactoryFeatureSupport(DXGI_FEATURE feature) const;
         #endif
+
+        void NotifyBindingTablesOnRelease(D3D11BindingLocator* locator);
 
     private:
 
@@ -160,6 +166,7 @@ class D3D11RenderSystem final : public RenderSystem
         bool                                    tearingSupported_       = false;
 
         std::shared_ptr<D3D11StateManager>      stateMngr_;
+        std::vector<D3D11StateManager*>         deferredStateMngrRefs_;
 
         /* ----- Hardware object containers ----- */
 

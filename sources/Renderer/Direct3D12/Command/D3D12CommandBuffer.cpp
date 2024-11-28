@@ -31,12 +31,18 @@
 #include "../RenderState/D3D12GraphicsPSO.h"
 #include "../RenderState/D3D12ComputePSO.h"
 
+#include "../Shader/D3D12BuiltinShaderFactory.h"
+
 #include <LLGL/TypeInfo.h>
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Backend/Direct3D12/NativeHandle.h>
 
 #include "../D3DX12/d3dx12.h"
+
+// Only include PIX if we build with MSVC as MSYS2 does not provide this header
+#ifdef _MSC_VER
 #include <pix.h>
+#endif
 
 #include <algorithm>
 
@@ -53,6 +59,7 @@ D3D12CommandBuffer::D3D12CommandBuffer(D3D12RenderSystem& renderSystem, const Co
     CreateCommandContext(renderSystem, desc);
     if (desc.debugName != nullptr)
         SetDebugName(desc.debugName);
+    CreateSOIndirectDrawArgBuffer(renderSystem.GetDXDevice());
 }
 
 void D3D12CommandBuffer::SetDebugName(const char* name)
@@ -152,7 +159,7 @@ void D3D12CommandBuffer::CopyBufferFromTexture(
             const UINT64 alignedBufferSize = GetAlignedImageSize<UINT64>(srcExtent, rowStride, alignedRowStride);
             ID3D12Resource* alignedBuffer = commandContext_.AllocIntermediateBuffer(alignedBufferSize, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, true);
 
             /* Copy entire region from source texture into intermediate buffer */
             const D3D12_TEXTURE_COPY_LOCATION dstLocationD3D = srcTextureD3D.CalcCopyLocation(alignedBuffer, 0, srcExtent, alignedRowStride);
@@ -165,7 +172,7 @@ void D3D12CommandBuffer::CopyBufferFromTexture(
                 &srcBox             // pSrcBox
             );
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST, true);
 
             /* Copy each row individually from intermediate buffer into destination buffer due to unalgined row pitch */
             UINT64 alignedOffset = 0;
@@ -179,7 +186,7 @@ void D3D12CommandBuffer::CopyBufferFromTexture(
                 }
             }
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, true);
         }
         else
         {
@@ -286,7 +293,7 @@ void D3D12CommandBuffer::CopyTextureFromBuffer(
             const UINT64 alignedBufferSize = GetAlignedImageSize<UINT64>(dstExtent, rowStride, alignedRowStride);
             ID3D12Resource* alignedBuffer = commandContext_.AllocIntermediateBuffer(alignedBufferSize, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ, true);
 
             /* Copy each row individually from intermediate buffer into destination texture due to unalgined row pitch */
             UINT64 alignedOffset = 0;
@@ -300,7 +307,7 @@ void D3D12CommandBuffer::CopyTextureFromBuffer(
                 }
             }
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST, true);
 
             /* Copy entire region from intermediate buffer into destination texture */
             const D3D12_TEXTURE_COPY_LOCATION srcLocationD3D = dstTextureD3D.CalcCopyLocation(alignedBuffer, 0, dstExtent, alignedRowStride);
@@ -313,7 +320,7 @@ void D3D12CommandBuffer::CopyTextureFromBuffer(
                 &srcBox                                 // pSrcBox
             );
 
-            commandContext_.TransitionResource(alignedBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, true);
+            commandContext_.TransitionBarrier(alignedBuffer, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE, true);
         }
         else
         {
@@ -510,12 +517,25 @@ void D3D12CommandBuffer::ClearAttachments(std::uint32_t numAttachments, const At
 void D3D12CommandBuffer::SetVertexBuffer(Buffer& buffer)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
+#if 0 //TODO: this does not work in multi-threaded environment
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, true);
+#endif
     GetNative()->IASetVertexBuffers(0, 1, &(bufferD3D.GetVertexBufferView()));
+
+    if ((bufferD3D.GetBindFlags() & BindFlags::StreamOutputBuffer) != 0)
+        soBufferIASlot0_ = &bufferD3D;
 }
 
 void D3D12CommandBuffer::SetVertexBufferArray(BufferArray& bufferArray)
 {
     auto& bufferArrayD3D = LLGL_CAST(D3D12BufferArray&, bufferArray);
+
+#if 0 //TODO: this does not work in multi-threaded environment
+    for (D3D12Resource* resource : bufferArrayD3D.GetResourceRefs())
+        commandContext_.TransitionResource(*resource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    commandContext_.FlushResourceBarrieres();
+#endif
+
     GetNative()->IASetVertexBuffers(
         0,
         static_cast<UINT>(bufferArrayD3D.GetVertexBufferViews().size()),
@@ -526,6 +546,9 @@ void D3D12CommandBuffer::SetVertexBufferArray(BufferArray& bufferArray)
 void D3D12CommandBuffer::SetIndexBuffer(Buffer& buffer)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
+#if 0 //TODO: this does not work in multi-threaded environment
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDEX_BUFFER, true);
+#endif
     commandContext_.SetIndexBuffer(bufferD3D.GetIndexBufferView());
 }
 
@@ -535,6 +558,10 @@ void D3D12CommandBuffer::SetIndexBuffer(Buffer& buffer, const Format format, std
     D3D12_INDEX_BUFFER_VIEW indexBufferView = bufferD3D.GetIndexBufferView();
     if (indexBufferView.SizeInBytes > offset)
     {
+#if 0 //TODO: this does not work in multi-threaded environment
+        commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDEX_BUFFER, true);
+#endif
+
         /* Update buffer location and size by offset, and override format */
         indexBufferView.BufferLocation  += offset;
         indexBufferView.SizeInBytes     -= static_cast<UINT>(offset);
@@ -576,7 +603,10 @@ void D3D12CommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32
     }
 
     /* Insert resource barriers for the specified descriptor set */
-    resourceHeapD3D.InsertResourceBarriers(GetNative(), descriptorSet);
+#if 0 //TODO: this does not work in multi-threaded environment
+    resourceHeapD3D.TransitionResources(commandContext_, descriptorSet);
+#endif
+    resourceHeapD3D.InsertUAVBarriers(GetNative(), descriptorSet);
 }
 
 /*
@@ -605,6 +635,13 @@ void D3D12CommandBuffer::SetResource(std::uint32_t descriptor, Resource& resourc
     const D3D12DescriptorLocation& rootParameterLocation = boundPipelineLayout_->GetRootParameterMap()[descriptor];
     if (rootParameterLocation.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
     {
+#if 0 //TODO: this does not work in multi-threaded environment
+        /* Transition resource into target state */
+        //TODO: should this be flushed immediately for root parameters?
+        commandContext_.TransitionGenericResource(resource, rootParameterLocation.state);
+#endif
+
+        /* Set resource as root parameter */
         D3D12_GPU_VIRTUAL_ADDRESS gpuVirtualAddr = GetD3DResourceGPUAddr(resource);
         if (gpuVirtualAddr != 0)
         {
@@ -617,8 +654,11 @@ void D3D12CommandBuffer::SetResource(std::uint32_t descriptor, Resource& resourc
     }
     else
     {
-        /* Bind resource with staging descriptor heap */
+        /* Transition resource into target state and bind resource with staging descriptor heap */
         const D3D12DescriptorHeapLocation& descriptorLocation = boundPipelineLayout_->GetDescriptorMap()[descriptor];
+#if 0 //TODO: this does not work in multi-threaded environment
+        commandContext_.TransitionGenericResource(resource, descriptorLocation.state);
+#endif
         commandContext_.EmplaceDescriptorForStaging(resource, descriptorLocation.index, descriptorLocation.type);
     }
 }
@@ -703,13 +743,18 @@ void D3D12CommandBuffer::SetPipelineState(PipelineState& pipelineState)
     /* Keep reference to pipeline layout */
     boundPipelineLayout_ = pipelineStateD3D.GetPipelineLayout();
 
-    /* Prepare staging descriptor heaps for bound pipeline layout */
     if (boundPipelineLayout_ != nullptr)
     {
+        /* Prepare staging descriptor heaps for bound pipeline layout */
         commandContext_.PrepareStagingDescriptorHeaps(
             boundPipelineLayout_->GetDescriptorHeapSetLayout(),
             boundPipelineLayout_->GetRootParameterIndices()
         );
+    }
+    else
+    {
+        /* Reset staging descriptor layout to avoid undefined behavior in next Flush*StagingDescriptorTables() call */
+        commandContext_.PrepareStagingDescriptorHeaps({}, {});
     }
 }
 
@@ -814,28 +859,32 @@ void D3D12CommandBuffer::BeginStreamOutput(std::uint32_t numBuffers, Buffer* con
         auto* bufferD3D = LLGL_CAST(D3D12Buffer*, buffers[i]);
         boundSOBuffers_[i] = bufferD3D;
         soBufferViews[i] = bufferD3D->GetSOBufferView();
+#if 1 //TODO: this does not work in multi-threaded environment
         commandContext_.TransitionResource(bufferD3D->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST);
+#endif
     }
     commandContext_.FlushResourceBarrieres();
 
     /* Reset counter values in buffers by copying from a static zero-initialized buffer to the stream-output targets */
-    const D3D12BufferConstantsView srcBufferView = D3D12BufferConstantsPool::Get().FetchConstants(D3D12BufferConstants::ZeroUInt64);
+    const D3D12BufferConstantsView srcBufferView = D3D12BufferConstantsPool::Get().FetchConstantsView(D3D12BufferConstants::ZeroUInt64);
 
     for_range(i, numSOBuffers_)
     {
         GetNative()->CopyBufferRegion(
             boundSOBuffers_[i]->GetNative(),
-            boundSOBuffers_[i]->GetBufferSize(),
+            boundSOBuffers_[i]->GetStreamOutputCounterOffset(),
             srcBufferView.resource,
             srcBufferView.offset,
             srcBufferView.size
         );
     }
 
+#if 1 //TODO: this does not work in multi-threaded environment
     /* Transition resources to stream-output */
     for_range(i, numSOBuffers_)
         commandContext_.TransitionResource(boundSOBuffers_[i]->GetResource(), D3D12_RESOURCE_STATE_STREAM_OUT);
     commandContext_.FlushResourceBarrieres();
+#endif
 
     /* Set active stream-output targets */
     GetNative()->SOSetTargets(0, numSOBuffers_, soBufferViews);
@@ -847,10 +896,12 @@ void D3D12CommandBuffer::EndStreamOutput()
     const D3D12_STREAM_OUTPUT_BUFFER_VIEW soBufferViewsNull[LLGL_MAX_NUM_SO_BUFFERS] = {};
     GetNative()->SOSetTargets(0, LLGL_MAX_NUM_SO_BUFFERS, soBufferViewsNull);
 
+#if 1 //TODO: this does not work in multi-threaded environment
     /* Transition resources back to their common usage */
     for_range(i, numSOBuffers_)
         commandContext_.TransitionResource(boundSOBuffers_[i]->GetResource(), boundSOBuffers_[i]->GetResource().usageState);
     commandContext_.FlushResourceBarrieres();
+#endif
 }
 
 /* ----- Drawing ----- */
@@ -898,12 +949,14 @@ void D3D12CommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uin
 void D3D12CommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     commandContext_.DrawIndirect(cmdSignatureFactory_->GetSignatureDrawIndirect(), 1, bufferD3D.GetNative(), offset);
 }
 
 void D3D12CommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     if likely(stride == sizeof(D3D12_DRAW_ARGUMENTS))
     {
         /* Encode indirect draw with pre-defined command stride */
@@ -923,14 +976,14 @@ void D3D12CommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std:
 void D3D12CommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
-    commandContext_.DrawIndirect(
-        cmdSignatureFactory_->GetSignatureDrawIndexedIndirect(), 1, bufferD3D.GetNative(), offset
-    );
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    commandContext_.DrawIndirect(cmdSignatureFactory_->GetSignatureDrawIndexedIndirect(), 1, bufferD3D.GetNative(), offset);
 }
 
 void D3D12CommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     auto& bufferD3D = LLGL_CAST(D3D12Buffer&, buffer);
+    commandContext_.TransitionResource(bufferD3D.GetResource(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     if likely(stride == sizeof(D3D12_DRAW_INDEXED_ARGUMENTS))
     {
         /* Encode indirect draw with pre-defined command stride */
@@ -945,6 +998,51 @@ void D3D12CommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offse
             offset += stride;
         }
     }
+}
+
+/*
+D3D12 stream-outputs only write out the fill buffer size. This cannot be used directly as indirect draw arguments for three reasons:
+ 1. It's a UINT64 instead of the required UINT (see D3D12_DRAW_ARGUMENTS::VertexCountPerInstance).
+ 2. It's a byte size instead of a vertex count (as opposed to D3D11).
+ 3. It does not contain any other draw arguments such as instance count - this could be compensated by providing these constants at buffer creation time.
+For these reasons, this function dispatches a single compute shader invocation to write out the draw arguments as follows:
+D3D12_DRAW_ARGUMENTS {
+  VertexCountPerInstance = SOFillBufferSize / VertexStride
+  InstanceCount          = 1
+  StartVertexLocation    = 0
+  StartInstanceLocation  = 0
+}
+*/
+void D3D12CommandBuffer::DrawStreamOutput()
+{
+    if unlikely(soBufferIASlot0_ == nullptr)
+        return /*E_INVALIDARG*/;
+
+    ID3D12PipelineState* soDrawArgsPSO = nullptr;
+    ID3D12RootSignature* soDrawArgsRootSig = nullptr;
+    D3D12BuiltinShaderFactory::Get().GetBulitinPSO(D3D12BuiltinPSO::StreamOutputDrawArgsCS, soDrawArgsPSO, soDrawArgsRootSig);
+
+    ID3D12GraphicsCommandList* commandList = commandContext_.GetCommandList();
+    ID3D12PipelineState* oldGraphicsPSO = commandContext_.GetCurrentPipelineState();
+
+    /* Copy stream-output fill buffer size into draw argument buffer */
+    commandContext_.TransitionResource(soBufferIASlot0_->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commandContext_.TransitionResource(soDrawArgBuffer_, D3D12_RESOURCE_STATE_COPY_DEST, true);
+    commandList->CopyBufferRegion(soDrawArgBuffer_.Get(), 0, soBufferIASlot0_->GetNative(), soBufferIASlot0_->GetStreamOutputCounterOffset(), sizeof(UINT64));
+
+    /* Generate indirect draw arguments with a single compute shader invocation */
+    commandContext_.TransitionResource(soDrawArgBuffer_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true);
+    commandContext_.SetComputeRootSignature(soDrawArgsRootSig);
+    commandList->SetPipelineState(soDrawArgsPSO);
+    commandList->SetComputeRoot32BitConstant(0, soBufferIASlot0_->GetStride(), 0);
+    commandList->SetComputeRootUnorderedAccessView(1, soDrawArgBuffer_.Get()->GetGPUVirtualAddress());
+    commandContext_.Dispatch(1, 1, 1);
+
+    /* Submit indirect draw command with previous graphics PSO */
+    commandList->SetPipelineState(oldGraphicsPSO);
+    commandContext_.UAVBarrier(soDrawArgBuffer_.Get());
+    commandContext_.TransitionResource(soDrawArgBuffer_, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, true);
+    commandContext_.DrawIndirect(cmdSignatureFactory_->GetSignatureDrawIndirect(), 1, soDrawArgBuffer_.Get(), 0);
 }
 
 /* ----- Compute ----- */
@@ -964,12 +1062,16 @@ void D3D12CommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
 
 void D3D12CommandBuffer::PushDebugGroup(const char* name)
 {
+    #ifdef _MSC_VER
     PIXBeginEvent(GetNative(), 0, name);
+    #endif
 }
 
 void D3D12CommandBuffer::PopDebugGroup()
 {
+    #ifdef _MSC_VER
     PIXEndEvent(GetNative());
+    #endif
 }
 
 /* ----- Extensions ----- */
@@ -1249,10 +1351,27 @@ void D3D12CommandBuffer::ResetBindingStates()
 {
     numDefaultScissorRects_ = 0;
     numSOBuffers_           = 0;
+    soBufferIASlot0_        = nullptr;
     boundRenderTarget_      = nullptr;
     boundSwapChain_         = nullptr;
     boundPipelineLayout_    = nullptr;
     boundPipelineState_     = nullptr;
+}
+
+void D3D12CommandBuffer::CreateSOIndirectDrawArgBuffer(ID3D12Device* device)
+{
+    const CD3DX12_HEAP_PROPERTIES heapProperties{ D3D12_HEAP_TYPE_DEFAULT };
+    const CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(D3D12_DRAW_ARGUMENTS), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    HRESULT hr = device->CreateCommittedResource(
+        &heapProperties,
+        D3D12_HEAP_FLAG_NONE,
+        &bufferDesc,
+        D3D12_RESOURCE_STATE_COMMON, // Buffers are effectively created in D3D12_RESOURCE_STATE_COMMON state
+        nullptr,
+        IID_PPV_ARGS(soDrawArgBuffer_.native.ReleaseAndGetAddressOf())
+    );
+    DXThrowIfCreateFailed(hr, "ID3D12Resource", "for D3D12 indirect draw argument buffer");
+    soDrawArgBuffer_.native->SetName(L"LLGL.SODrawArgBuffer");
 }
 
 

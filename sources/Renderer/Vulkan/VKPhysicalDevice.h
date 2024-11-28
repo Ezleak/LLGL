@@ -36,11 +36,9 @@ class VKPhysicalDevice
         // Loads the physical Vulkan device from a custom native handle.
         void LoadPhysicalDeviceWeakRef(VkPhysicalDevice physicalDevice);
 
-        void QueryDeviceProperties(
-            RendererInfo&               info,
-            RenderingCapabilities&      caps,
-            VKGraphicsPipelineLimits&   pipelineLimits
-        );
+        void QueryRendererInfo(RendererInfo& outInfo);
+        void QueryRenderingCaps(RenderingCapabilities& outCaps);
+        void QueryPipelineLimits(VKGraphicsPipelineLimits& outPipelineLimits);
 
         VKDevice CreateLogicalDevice(VkDevice customLogicalDevice = VK_NULL_HANDLE);
 
@@ -64,7 +62,7 @@ class VKPhysicalDevice
         }
 
         // Returns the Vulkan specific features of the physical device.
-        inline const VkPhysicalDeviceFeatures& GetFeatures() const
+        inline const VkPhysicalDeviceFeatures2& GetFeatures() const
         {
             return features_;
         }
@@ -103,9 +101,9 @@ class VKPhysicalDevice
         bool EnableExtensions(const char** extensions, bool required = false);
 
         void QueryDeviceInfo();
-        void QueryDeviceFeaturesWithExtensions();
-        void QueryDevicePropertiesWithExtensions();
-        void QueryDeviceMemoryPropertiesWithExtensions();
+        void QueryDeviceFeatures();
+        void QueryDeviceProperties();
+        void QueryDeviceMemoryProperties();
 
     private:
 
@@ -116,12 +114,19 @@ class VKPhysicalDevice
         std::vector<const char*>                                enabledExtensionNames_;
 
         // Common device properties and features
-        VkPhysicalDeviceFeatures                                features_                   = {};
+        VkPhysicalDeviceFeatures2                               features_                   = {};
+        #if VK_EXT_nested_command_buffer
+        VkPhysicalDeviceNestedCommandBufferFeaturesEXT          featuresNestedCmdBuffers_   = {};
+        #endif
         VkPhysicalDeviceProperties                              properties_                 = {};
         VkPhysicalDeviceMemoryProperties                        memoryProperties_           = {};
 
         // Extension specific
         VkPhysicalDeviceConservativeRasterizationPropertiesEXT  conservRasterProps_         = {};
+        #if VK_EXT_transform_feedback
+        VkPhysicalDeviceTransformFeedbackPropertiesEXT          transformFeedbackProps_     = {};
+        VkPhysicalDeviceTransformFeedbackFeaturesEXT            transformFeedbackFeatures_  = {};
+        #endif
 
 };
 

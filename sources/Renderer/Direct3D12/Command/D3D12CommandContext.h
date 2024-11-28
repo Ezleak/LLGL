@@ -16,6 +16,7 @@
 #include "../RenderState/D3D12DescriptorCache.h"
 #include "../Buffer/D3D12StagingBufferPool.h"
 #include "../Buffer/D3D12IntermediateBufferPool.h"
+#include "../../../Core/CompilerExtensions.h"
 #include <d3d12.h>
 #include <cstddef>
 #include <cstdint>
@@ -79,12 +80,16 @@ class D3D12CommandContext
             return commandList_.Get();
         }
 
-        // Transition all subresources to the specified new state.
-        void TransitionResource(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, bool flushImmediate = false);
-        void TransitionResource(D3D12Resource& resource, D3D12_RESOURCE_STATES newState, bool flushImmediate = false);
-
         // Insert a resource barrier for an unordered access view (UAV).
-        void InsertUAVBarrier(D3D12Resource& resource, bool flushImmediate = false);
+        void UAVBarrier(ID3D12Resource* resource, bool flushImmediate = false);
+
+        // Insert a transition barrier for a native D3D12 subresource.
+        void TransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, bool flushImmediate = false);
+        void TransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, UINT subresource, bool flushImmediate);
+
+        // Transition and cache a resource state.
+        void TransitionResource(D3D12Resource& resource, D3D12_RESOURCE_STATES newState, bool flushImmediate = false);
+        void TransitionGenericResource(Resource& resource, D3D12_RESOURCE_STATES newState, bool flushImmediate = false);
 
         // Flush all accumulated resource barriers.
         void FlushResourceBarrieres();
@@ -200,6 +205,12 @@ class D3D12CommandContext
         inline ID3D12Device* GetDevice() const
         {
             return device_;
+        }
+
+        // Returns the currently bound PSO.
+        inline ID3D12PipelineState* GetCurrentPipelineState() const
+        {
+            return stateCache_.pipelineState;
         }
 
     private:

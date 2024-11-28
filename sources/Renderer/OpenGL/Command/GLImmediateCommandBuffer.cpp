@@ -16,7 +16,7 @@
 #include "../GLSwapChain.h"
 #include "../Ext/GLExtensions.h"
 #include "../Ext/GLExtensionRegistry.h"
-#include "../GLProfile.h"
+#include "../Profile/GLProfile.h"
 #include "../GLTypes.h"
 #include "../GLCore.h"
 #include "../../CheckedCast.h"
@@ -26,14 +26,13 @@
 
 #include "../Texture/GLTexture.h"
 #include "../Texture/GLSampler.h"
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-#   include "../Texture/GL2XSampler.h"
-#endif
+#include "../Texture/GLEmulatedSampler.h"
 #include "../Texture/GLRenderTarget.h"
 #include "../Texture/GLMipGenerator.h"
 #include "../Texture/GLFramebufferCapture.h"
 
 #include "../Buffer/GLBufferWithVAO.h"
+#include "../Buffer/GLBufferWithXFB.h"
 #include "../Buffer/GLBufferArrayWithVAO.h"
 
 #include "../RenderState/GLStateManager.h"
@@ -51,8 +50,8 @@ namespace LLGL
 {
 
 
-GLImmediateCommandBuffer::GLImmediateCommandBuffer(GLStateManager& stateManager) :
-    stateMngr_ { &stateManager }
+GLImmediateCommandBuffer::GLImmediateCommandBuffer() :
+    stateMngr_ { &(GLStateManager::Get()) }
 {
 }
 
@@ -60,6 +59,7 @@ GLImmediateCommandBuffer::GLImmediateCommandBuffer(GLStateManager& stateManager)
 
 void GLImmediateCommandBuffer::Begin()
 {
+    stateMngr_ = &(GLStateManager::Get());
     ResetRenderState();
 }
 
@@ -289,19 +289,16 @@ void GLImmediateCommandBuffer::SetVertexBuffer(Buffer& buffer)
     {
         /* Bind vertex buffer */
         auto& vertexBufferGL = LLGL_CAST(GLBufferWithVAO&, buffer);
+        vertexBufferGL.GetVertexArray()->Bind(*stateMngr_);
 
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        if (!HasNativeVAO())
+        #if LLGL_GLEXT_TRNASFORM_FEEDBACK2
+        /* Store ID to transform feedback object */
+        if ((buffer.GetBindFlags() & BindFlags::StreamOutputBuffer) != 0)
         {
-            /* Bind vertex array with emulator (for GL 2.x compatibility) */
-            vertexBufferGL.GetVertexArrayGL2X().Bind(*stateMngr_);
+            auto& streamOutputBufferGL = LLGL_CAST(GLBufferWithXFB&, vertexBufferGL);
+            SetTransformFeedback(streamOutputBufferGL);
         }
-        else
-        #endif // /LLGL_GL_ENABLE_OPENGL2X
-        {
-            /* Bind vertex array with native VAO */
-            stateMngr_->BindVertexArray(vertexBufferGL.GetVaoID());
-        }
+        #endif // /LLGL_GLEXT_TRNASFORM_FEEDBACK2
     }
 }
 
@@ -311,19 +308,7 @@ void GLImmediateCommandBuffer::SetVertexBufferArray(BufferArray& bufferArray)
     {
         /* Bind vertex buffer */
         auto& vertexBufferArrayGL = LLGL_CAST(GLBufferArrayWithVAO&, bufferArray);
-
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        if (!HasNativeVAO())
-        {
-            /* Bind vertex array with emulator (for GL 2.x compatibility) */
-            vertexBufferArrayGL.GetVertexArrayGL2X().Bind(*stateMngr_);
-        }
-        else
-        #endif // /LLGL_GL_ENABLE_OPENGL2X
-        {
-            /* Bind vertex array with native VAO */
-            stateMngr_->BindVertexArray(vertexBufferArrayGL.GetVaoID());
-        }
+        vertexBufferArrayGL.GetVertexArray()->Bind(*stateMngr_);
     }
 }
 
@@ -350,7 +335,7 @@ void GLImmediateCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::
 {
     auto& resourceHeapGL = LLGL_CAST(GLResourceHeap&, resourceHeap);
     resourceHeapGL.Bind(*stateMngr_, descriptorSet);
-    #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+    #if LLGL_GLEXT_MEMORY_BARRIERS
     InvalidateMemoryBarriers(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     #endif
 }
@@ -382,7 +367,7 @@ void GLImmediateCommandBuffer::SetResource(std::uint32_t descriptor, Resource& r
         {
             auto& bufferGL = LLGL_CAST(GLBuffer&, resource);
             stateMngr_->BindBufferBase(GLBufferTarget::ShaderStorageBuffer, binding.slot, bufferGL.GetID());
-            #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+            #if LLGL_GLEXT_MEMORY_BARRIERS
             if ((bufferGL.GetBindFlags() & BindFlags::Storage) != 0)
                 InvalidateMemoryBarriers(GL_SHADER_STORAGE_BARRIER_BIT);
             #endif
@@ -394,7 +379,7 @@ void GLImmediateCommandBuffer::SetResource(std::uint32_t descriptor, Resource& r
             auto& textureGL = LLGL_CAST(GLTexture&, resource);
             stateMngr_->ActiveTexture(binding.slot);
             stateMngr_->BindGLTexture(textureGL);
-            #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+            #if LLGL_GLEXT_MEMORY_BARRIERS
             if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
                 InvalidateMemoryBarriers(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             #endif
@@ -405,7 +390,7 @@ void GLImmediateCommandBuffer::SetResource(std::uint32_t descriptor, Resource& r
         {
             auto& textureGL = LLGL_CAST(GLTexture&, resource);
             stateMngr_->BindImageTexture(binding.slot, 0, textureGL.GetGLInternalFormat(), textureGL.GetID());
-            #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+            #if LLGL_GLEXT_MEMORY_BARRIERS
             if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
                 InvalidateMemoryBarriers(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             #endif
@@ -419,12 +404,10 @@ void GLImmediateCommandBuffer::SetResource(std::uint32_t descriptor, Resource& r
         }
         break;
 
-        case GLResourceType_GL2XSampler:
+        case GLResourceType_EmulatedSampler:
         {
-            #ifdef LLGL_GL_ENABLE_OPENGL2X
-            auto& samplerGL2X = LLGL_CAST(GL2XSampler&, resource);
-            stateMngr_->BindGL2XSampler(binding.slot, samplerGL2X);
-            #endif // /LLGL_GL_ENABLE_OPENGL2X
+            auto& emulatedSamplerGL = LLGL_CAST(GLEmulatedSampler&, resource);
+            stateMngr_->BindEmulatedSampler(binding.slot, emulatedSamplerGL);
         }
         break;
     }
@@ -454,7 +437,9 @@ void GLImmediateCommandBuffer::BeginRenderPass(
 
 void GLImmediateCommandBuffer::EndRenderPass()
 {
-    // dummy
+    /* Resolve previously bound render target */
+    if (GLRenderTarget* renderTarget = stateMngr_->GetBoundRenderTarget())
+        renderTarget->ResolveMultisampled(*stateMngr_);
 }
 
 void GLImmediateCommandBuffer::Clear(long flags, const ClearValue& clearValue)
@@ -522,7 +507,7 @@ void GLImmediateCommandBuffer::SetUniforms(std::uint32_t first, const void* data
             return /*GL_INVALID_INDEX*/;
 
         const auto& uniform = uniformMap[first];
-        GLSetUniformsByType(uniform.type, uniform.location, uniform.count, words);
+        GLSetUniform(uniform.type, uniform.location, uniform.count, words);
 
         words += uniform.wordSize;
     }
@@ -546,7 +531,7 @@ void GLImmediateCommandBuffer::EndQuery(QueryHeap& queryHeap, std::uint32_t /*qu
 
 void GLImmediateCommandBuffer::BeginRenderCondition(QueryHeap& queryHeap, std::uint32_t query, const RenderConditionMode mode)
 {
-    #ifdef LLGL_GLEXT_CONDITIONAL_RENDER
+    #if LLGL_GLEXT_CONDITIONAL_RENDER
     auto& queryHeapGL = LLGL_CAST(GLQueryHeap&, queryHeap);
     glBeginConditionalRender(queryHeapGL.GetID(query), GLTypes::Map(mode));
     #endif
@@ -554,7 +539,7 @@ void GLImmediateCommandBuffer::BeginRenderCondition(QueryHeap& queryHeap, std::u
 
 void GLImmediateCommandBuffer::EndRenderCondition()
 {
-    #ifdef LLGL_GLEXT_CONDITIONAL_RENDER
+    #if LLGL_GLEXT_CONDITIONAL_RENDER
     glEndConditionalRender();
     #endif
 }
@@ -563,20 +548,28 @@ void GLImmediateCommandBuffer::EndRenderCondition()
 
 void GLImmediateCommandBuffer::BeginStreamOutput(std::uint32_t numBuffers, Buffer* const * buffers)
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     /* Bind transform feedback buffers */
     GLuint soTargets[LLGL_MAX_NUM_SO_BUFFERS];
     numBuffers = std::min(numBuffers, LLGL_MAX_NUM_SO_BUFFERS);
 
+    if (numBuffers > 0)
+    {
+        auto* bufferWithXfbGL = LLGL_CAST(GLBufferWithXFB*, buffers[0]);
+        GLBufferWithXFB::BeginTransformFeedback(*stateMngr_, *bufferWithXfbGL, GetPrimitiveMode());
+    }
+
     for_range(i, numBuffers)
     {
-        auto bufferGL = LLGL_CAST(GLBuffer*, buffers[i]);
+        auto* bufferGL = LLGL_CAST(GLBuffer*, buffers[i]);
         soTargets[i] = bufferGL->GetID();
     }
 
     stateMngr_->BindBuffersBase(GLBufferTarget::TransformFeedbackBuffer, 0, static_cast<GLsizei>(numBuffers), soTargets);
 
     /* Begin transform feedback section */
-    #ifdef LLGL_GLEXT_TRANSFORM_FEEDBACK
+    #if LLGL_GLEXT_TRANSFORM_FEEDBACK
     glBeginTransformFeedback(GetPrimitiveMode());
     #else
     if (HasExtension(GLExt::EXT_transform_feedback))
@@ -584,12 +577,16 @@ void GLImmediateCommandBuffer::BeginStreamOutput(std::uint32_t numBuffers, Buffe
     else if (HasExtension(GLExt::NV_transform_feedback))
         glBeginTransformFeedbackNV(GetPrimitiveMode());
     #endif
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 }
 
 void GLImmediateCommandBuffer::EndStreamOutput()
 {
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     /* End transform feedback section */
-    #ifdef LLGL_GLEXT_TRANSFORM_FEEDBACK
+    #if LLGL_GLEXT_TRANSFORM_FEEDBACK
     glEndTransformFeedback();
     #else
     if (HasExtension(GLExt::EXT_transform_feedback))
@@ -597,6 +594,10 @@ void GLImmediateCommandBuffer::EndStreamOutput()
     else if (HasExtension(GLExt::NV_transform_feedback))
         glEndTransformFeedbackNV();
     #endif
+
+    GLBufferWithXFB::EndTransformFeedback(*stateMngr_);
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 }
 
 /* ----- Drawing ----- */
@@ -607,7 +608,7 @@ In the following Draw* functions, 'indices' is from type <GLintptr> to have the 
 The indices actually store the index start offset, but must be passed to GL as a void-pointer, due to an obsolete API.
 */
 
-#ifdef LLGL_GLEXT_MEMORY_BARRIERS
+#if LLGL_GLEXT_MEMORY_BARRIERS
 #   define LLGL_FLUSH_MEMORY_BARRIERS() \
         if (GLbitfield barriers = FlushAndGetMemoryBarriers()) { glMemoryBarrier(barriers); }
 #else
@@ -637,7 +638,7 @@ void GLImmediateCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32
 
 void GLImmediateCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
-    #ifdef LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
+    #if LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawElementsBaseVertex(
         GetDrawMode(),
@@ -646,11 +647,12 @@ void GLImmediateCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32
         GetIndicesOffset(firstIndex),
         vertexOffset
     );
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
 }
 
 void GLImmediateCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances)
 {
+    #if LLGL_GLEXT_DRAW_INSTANCED
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawArraysInstanced(
         GetDrawMode(),
@@ -658,11 +660,12 @@ void GLImmediateCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uin
         static_cast<GLsizei>(numVertices),
         static_cast<GLsizei>(numInstances)
     );
+    #endif
 }
 
 void GLImmediateCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance)
 {
-    #ifdef LLGL_GLEXT_BASE_INSTANCE
+    #if LLGL_GLEXT_BASE_INSTANCE
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawArraysInstancedBaseInstance(
         GetDrawMode(),
@@ -676,6 +679,7 @@ void GLImmediateCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uin
 
 void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex)
 {
+    #if LLGL_GLEXT_DRAW_INSTANCED
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawElementsInstanced(
         GetDrawMode(),
@@ -684,11 +688,12 @@ void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, st
         GetIndicesOffset(firstIndex),
         static_cast<GLsizei>(numInstances)
     );
+    #endif
 }
 
 void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
-    #ifdef LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
+    #if LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawElementsInstancedBaseVertex(
         GetDrawMode(),
@@ -698,12 +703,12 @@ void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, st
         static_cast<GLsizei>(numInstances),
         vertexOffset
     );
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_ELEMENTS_BASE_VERTEX
 }
 
 void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance)
 {
-    #ifdef LLGL_GLEXT_BASE_INSTANCE
+    #if LLGL_GLEXT_BASE_INSTANCE
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDrawElementsInstancedBaseVertexBaseInstance(
         GetDrawMode(),
@@ -719,7 +724,7 @@ void GLImmediateCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, st
 
 void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    #ifdef LLGL_GLEXT_DRAW_INDIRECT
+    #if LLGL_GLEXT_DRAW_INDIRECT
     LLGL_FLUSH_MEMORY_BARRIERS();
 
     auto& bufferGL = LLGL_CAST(GLBuffer&, buffer);
@@ -730,12 +735,12 @@ void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset
         GetDrawMode(),
         reinterpret_cast<const GLvoid*>(indirect)
     );
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_INDIRECT
 }
 
 void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
-    #ifdef LLGL_GLEXT_DRAW_INDIRECT
+    #if LLGL_GLEXT_DRAW_INDIRECT
     LLGL_FLUSH_MEMORY_BARRIERS();
 
     /* Bind indirect argument buffer */
@@ -743,7 +748,7 @@ void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset
     stateMngr_->BindBuffer(GLBufferTarget::DrawIndirectBuffer, bufferGL.GetID());
 
     GLintptr indirect = static_cast<GLintptr>(offset);
-    #ifdef LLGL_GLEXT_MULTI_DRAW_INDIRECT
+    #if LLGL_GLEXT_MULTI_DRAW_INDIRECT
     if (HasExtension(GLExt::ARB_multi_draw_indirect))
     {
         /* Use native multi draw command */
@@ -755,7 +760,7 @@ void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset
         );
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_MULTI_DRAW_INDIRECT
     {
         /* Emulate multi draw command */
         while (numCommands-- > 0)
@@ -767,12 +772,12 @@ void GLImmediateCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset
             indirect += stride;
         }
     }
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_INDIRECT
 }
 
 void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    #ifdef LLGL_GLEXT_DRAW_INDIRECT
+    #if LLGL_GLEXT_DRAW_INDIRECT
     LLGL_FLUSH_MEMORY_BARRIERS();
 
     auto& bufferGL = LLGL_CAST(GLBuffer&, buffer);
@@ -784,12 +789,12 @@ void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t
         GetIndexType(),
         reinterpret_cast<const GLvoid*>(indirect)
     );
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_INDIRECT
 }
 
 void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
-    #ifdef LLGL_GLEXT_DRAW_INDIRECT
+    #if LLGL_GLEXT_DRAW_INDIRECT
     LLGL_FLUSH_MEMORY_BARRIERS();
 
     /* Bind indirect argument buffer */
@@ -797,7 +802,7 @@ void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t
     stateMngr_->BindBuffer(GLBufferTarget::DrawIndirectBuffer, bufferGL.GetID());
 
     GLintptr indirect = static_cast<GLintptr>(offset);
-    #ifdef LLGL_GLEXT_MULTI_DRAW_INDIRECT
+    #if LLGL_GLEXT_MULTI_DRAW_INDIRECT
     if (HasExtension(GLExt::ARB_multi_draw_indirect))
     {
         /* Use native multi draw command */
@@ -810,7 +815,7 @@ void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t
         );
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_MULTI_DRAW_INDIRECT
     {
         /* Emulate multi draw command */
         while (numCommands-- > 0)
@@ -823,14 +828,34 @@ void GLImmediateCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t
             indirect += stride;
         }
     }
-    #endif
+    #endif // /LLGL_GLEXT_DRAW_INDIRECT
+}
+
+void GLImmediateCommandBuffer::DrawStreamOutput()
+{
+    if (GLBufferWithXFB* bufferWithXfbGL = GetRenderState().boundBufferWithFxb)
+    {
+        LLGL_FLUSH_MEMORY_BARRIERS();
+        #if LLGL_GLEXT_TRNASFORM_FEEDBACK2
+        if (HasExtension(GLExt::ARB_transform_feedback2))
+        {
+            /* Draw primitives with internal number of vertices */
+            glDrawTransformFeedback(GetDrawMode(), bufferWithXfbGL->GetTransformFeedbackID());
+        }
+        else
+        #endif // /LLGL_GLEXT_TRNASFORM_FEEDBACK2
+        {
+            /* Draw primitives with the queried number of vertices */
+            glDrawArrays(GetDrawMode(), 0, bufferWithXfbGL->QueryVertexCount());
+        }
+    }
 }
 
 /* ----- Compute ----- */
 
 void GLImmediateCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint32_t numWorkGroupsY, std::uint32_t numWorkGroupsZ)
 {
-    #ifdef LLGL_GLEXT_COMPUTE_SHADER
+    #if LLGL_GLEXT_COMPUTE_SHADER
     LLGL_FLUSH_MEMORY_BARRIERS();
     glDispatchCompute(numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ);
     #endif
@@ -838,7 +863,7 @@ void GLImmediateCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint3
 
 void GLImmediateCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    #ifdef LLGL_GLEXT_COMPUTE_SHADER
+    #if LLGL_GLEXT_COMPUTE_SHADER
     LLGL_FLUSH_MEMORY_BARRIERS();
     auto& bufferGL = LLGL_CAST(GLBuffer&, buffer);
     stateMngr_->BindBuffer(GLBufferTarget::DispatchIndirectBuffer, bufferGL.GetID());
@@ -850,7 +875,7 @@ void GLImmediateCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t of
 
 void GLImmediateCommandBuffer::PushDebugGroup(const char* name)
 {
-    #ifdef GL_KHR_debug
+    #if LLGL_GLEXT_DEBUG
     if (HasExtension(GLExt::KHR_debug))
     {
         /* Push debug group name into command stream with default ID no. */
@@ -861,15 +886,15 @@ void GLImmediateCommandBuffer::PushDebugGroup(const char* name)
 
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, id, static_cast<GLsizei>(croppedLength), name);
     }
-    #endif // /GL_KHR_debug
+    #endif // /LLGL_GLEXT_DEBUG
 }
 
 void GLImmediateCommandBuffer::PopDebugGroup()
 {
-    #ifdef GL_KHR_debug
+    #if LLGL_GLEXT_DEBUG
     if (HasExtension(GLExt::KHR_debug))
         glPopDebugGroup();
-    #endif // /GL_KHR_debug
+    #endif // /LLGL_GLEXT_DEBUG
 }
 
 /* ----- Extensions ----- */

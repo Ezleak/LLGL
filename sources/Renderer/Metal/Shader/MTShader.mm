@@ -142,12 +142,13 @@ static MTLCompileOptions* ToMTLCompileOptions(const ShaderDescriptor& shaderDesc
             ];
         }
         [opt setPreprocessorMacros:preprocessorMacros];
+        [preprocessorMacros release];
     }
 
     return opt;
 }
 
-bool MTShader::CompileFromDefaultLibrary(id<MTLDevice> device, const ShaderDescriptor &shaderDesc)
+bool MTShader::CompileFromDefaultLibrary(id<MTLDevice> device, const ShaderDescriptor& shaderDesc)
 {
     library_ = [device newDefaultLibrary];
     return LoadShaderFunction(shaderDesc.entryPoint);
@@ -300,7 +301,7 @@ bool MTShader::LoadShaderFunction(const char* entryPoint, NSError* error)
 {
     bool result = false;
 
-    /* Load shader function from libary */
+    /* Load shader function from library */
     if (library_)
     {
         NSString* entryPointStr = ToNSString(entryPoint);

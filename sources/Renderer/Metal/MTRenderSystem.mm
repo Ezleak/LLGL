@@ -37,7 +37,6 @@ MTRenderSystem::MTRenderSystem(const RenderSystemDescriptor& renderSystemDesc)
         CreateDeviceResources(customNativeHandle->device);
     else
         CreateDeviceResources();
-    QueryRenderingCaps();
 }
 
 MTRenderSystem::~MTRenderSystem()
@@ -49,7 +48,7 @@ MTRenderSystem::~MTRenderSystem()
 
 SwapChain* MTRenderSystem::CreateSwapChain(const SwapChainDescriptor& swapChainDesc, const std::shared_ptr<Surface>& surface)
 {
-    return swapChains_.emplace<MTSwapChain>(device_, swapChainDesc, surface);
+    return swapChains_.emplace<MTSwapChain>(device_, swapChainDesc, surface, GetRendererInfo());
 }
 
 void MTRenderSystem::Release(SwapChain& swapChain)
@@ -309,13 +308,12 @@ void MTRenderSystem::Release(PipelineState& pipelineState)
 
 QueryHeap* MTRenderSystem::CreateQueryHeap(const QueryHeapDescriptor& queryHeapDesc)
 {
-    return nullptr;//todo
+    return queryHeaps_.emplace<MTQueryHeap>(device_, queryHeapDesc);
 }
 
 void MTRenderSystem::Release(QueryHeap& queryHeap)
 {
-    //todo
-    //queryHeaps_.erase(&queryHeap);
+    queryHeaps_.erase(&queryHeap);
 }
 
 /* ----- Fences ----- */
@@ -364,16 +362,6 @@ void MTRenderSystem::CreateDeviceResources(id<MTLDevice> sharedDevice)
             LLGL_TRAP("failed to create Metal device");
     }
 
-    /* Initialize renderer information */
-    RendererInfo info;
-    {
-        info.rendererName           = "Metal " + std::string(QueryMetalVersion());
-        info.deviceName             = [[device_ name] cStringUsingEncoding:NSUTF8StringEncoding];
-        info.vendorName             = "Apple";
-        info.shadingLanguageName    = "Metal Shading Language";
-    }
-    SetRendererInfo(info);
-
     /* Create command queue */
     commandQueue_ = MakeUnique<MTCommandQueue>(device_);
 
@@ -385,16 +373,26 @@ void MTRenderSystem::CreateDeviceResources(id<MTLDevice> sharedDevice)
     intermediateBuffer_ = MakeUnique<MTIntermediateBuffer>(device_, MTLResourceStorageModeShared, intermediateBufferAlignment);
 }
 
-void MTRenderSystem::QueryRenderingCaps()
+void MTRenderSystem::QueryRendererInfo(RendererInfo& info)
 {
-    RenderingCapabilities caps;
-    LoadFeatureSetCaps(device_, QueryHighestFeatureSet(), caps);
-    SetRenderingCaps(caps);
+    info.rendererName           = "Metal " + std::string(QueryMetalVersion());
+    info.deviceName             = [[device_ name] cStringUsingEncoding:NSUTF8StringEncoding];
+    info.vendorName             = "Apple";
+    info.shadingLanguageName    = "Metal Shading Language";
+}
+
+bool MTRenderSystem::QueryRendererDetails(RendererInfo* outInfo, RenderingCapabilities* outCaps)
+{
+    if (outInfo != nullptr)
+        QueryRendererInfo(*outInfo);
+    if (outCaps != nullptr)
+        LoadFeatureSetCaps(device_, QueryHighestFeatureSet(), *outCaps);
+    return true;
 }
 
 const char* MTRenderSystem::QueryMetalVersion() const
 {
-    const auto featureSet = QueryHighestFeatureSet();
+    const MTLFeatureSet featureSet = QueryHighestFeatureSet();
 
     #ifdef LLGL_OS_IOS
 

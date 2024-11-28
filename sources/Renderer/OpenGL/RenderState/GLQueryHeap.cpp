@@ -41,22 +41,24 @@ static GLenum MapQueryType(const QueryType queryType, std::size_t idx)
 {
     switch (queryType)
     {
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL
         case QueryType::SamplesPassed:                      return GL_SAMPLES_PASSED;
         #endif
+        #if !LLGL_GL_ENABLE_OPENGL2X
         case QueryType::AnySamplesPassed:                   return GL_ANY_SAMPLES_PASSED;
         case QueryType::AnySamplesPassedConservative:       return GL_ANY_SAMPLES_PASSED_CONSERVATIVE;
-        #ifdef LLGL_OPENGL
+        #if LLGL_OPENGL
         case QueryType::TimeElapsed:                        return GL_TIME_ELAPSED;
         #endif
         case QueryType::StreamOutPrimitivesWritten:         return GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN;
-        #ifdef GL_ARB_transform_feedback_overflow_query
+        #if GL_ARB_transform_feedback_overflow_query
         case QueryType::StreamOutOverflow:                  return GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB;
         //GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB;
         #endif
-        #ifdef GL_ARB_pipeline_statistics_query
+        #if GL_ARB_pipeline_statistics_query
         case QueryType::PipelineStatistics:                 return g_queryGLTypes[idx];
         #endif
+        #endif // /!LLGL_GL_ENABLE_OPENGL2X
         default:                                            return 0;
     }
 }
@@ -67,7 +69,7 @@ GLQueryHeap::GLQueryHeap(const QueryHeapDescriptor& desc) :
     #ifdef GL_ARB_pipeline_statistics_query
     if (desc.type == QueryType::PipelineStatistics)
     {
-        /* Allocate IDs for all pipeline statistics queries or throw error on failure */
+        /* Allocate IDs for all pipeline statistics queries or trap program execution on failure */
         LLGL_ASSERT_GL_EXT(ARB_pipeline_statistics_query);
         groupSize_ = static_cast<std::uint32_t>(sizeof(QueryPipelineStatistics) / sizeof(std::uint64_t));
     }
@@ -82,8 +84,10 @@ GLQueryHeap::GLQueryHeap(const QueryHeapDescriptor& desc) :
     ids_.resize(groupSize_ * desc.numQueries);
     glGenQueries(static_cast<GLsizei>(ids_.size()), ids_.data());
 
+#if 0 //TODO: produces GL debug error
     if (desc.debugName != nullptr)
         SetDebugName(desc.debugName);
+#endif
 }
 
 GLQueryHeap::~GLQueryHeap()
@@ -101,7 +105,7 @@ void GLQueryHeap::SetDebugName(const char* name)
     else
     {
         /* Set label for each native query object */
-        for (std::uint32_t i = 0, n = static_cast<std::uint32_t>(GetIDs().size()); i < n; ++i)
+        for_range(i, static_cast<std::uint32_t>(GetIDs().size()))
             GLSetObjectLabelIndexed(GL_QUERY, GetID(i), name, i);
     }
 }

@@ -10,13 +10,15 @@
 
 
 #include "../OpenGL.h"
+#include <LLGL/Container/ArrayView.h>
 
 
 namespace LLGL
 {
 
 
-struct VertexAttribute;
+class GLStateManager;
+struct GLVertexAttribute;
 
 // Wrapper class for an OpenGL Vertex-Array-Object (VAO), for GL 3.0+.
 class GLVertexArrayObject
@@ -24,17 +26,21 @@ class GLVertexArrayObject
 
     public:
 
-        GLVertexArrayObject();
-        ~GLVertexArrayObject();
+        // Release VAO from GL context.
+        void Release();
 
         // Builds the specified attribute using a 'glVertexAttrib*Pointer' function.
-        void BuildVertexAttribute(const VertexAttribute& attribute);
+        void BuildVertexLayout(const ArrayView<GLVertexAttribute>& attributes);
 
         // Returns the ID of the hardware vertex-array-object (VAO)
         inline GLuint GetID() const
         {
             return id_;
         }
+
+    private:
+
+        void BuildVertexAttribute(const GLVertexAttribute& attribute);
 
     private:
 

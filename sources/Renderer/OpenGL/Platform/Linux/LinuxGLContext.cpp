@@ -14,6 +14,7 @@
 #include "../../../RenderSystemUtils.h"
 #include "../../../../Core/CoreUtils.h"
 #include "../../../../Core/Assertion.h"
+#include "../../../../Platform/Linux/LinuxDisplay.h"
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
 #include <LLGL/Log.h>
 #include <algorithm>
@@ -68,6 +69,10 @@ LinuxGLContext::LinuxGLContext(
 :
     samples_ { pixelFormat.samples }
 {
+    /* Notify the shared X11 display that it'll be used by libGL.so to ensure a clean teardown */
+    LinuxSharedX11Display::RetainLibGL();
+
+    /* Create GLX or proxy context if a custom one is specified */
     NativeHandle nativeWindowHandle = {};
     surface.GetNativeHandle(&nativeWindowHandle, sizeof(nativeWindowHandle));
     if (customNativeHandle != nullptr)
@@ -101,6 +106,72 @@ bool LinuxGLContext::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
     return false;
 }
 
+::XVisualInfo* LinuxGLContext::ChooseVisual(::Display* display, int screen, const GLPixelFormat& pixelFormat, int& outSamples)
+{
+    GLXFBConfig framebufferConfig = 0;
+
+    /* Find suitable multi-sample format (for samples > 1) */
+    for (outSamples = pixelFormat.samples; outSamples > 1; --outSamples)
+    {
+        /* Create framebuffer configuration for multi-sampling */
+        const int framebufferAttribs[] =
+        {
+            GLX_DOUBLEBUFFER,   True,
+            GLX_X_RENDERABLE,   True,
+            GLX_DRAWABLE_TYPE,  GLX_WINDOW_BIT,
+            GLX_RENDER_TYPE,    GLX_RGBA_BIT,
+            GLX_X_VISUAL_TYPE,  GLX_TRUE_COLOR,
+            GLX_RED_SIZE,       8,
+            GLX_GREEN_SIZE,     8,
+            GLX_BLUE_SIZE,      8,
+            GLX_ALPHA_SIZE,     (pixelFormat.colorBits == 32 ? 8 : 0),
+            GLX_DEPTH_SIZE,     pixelFormat.depthBits,
+            GLX_STENCIL_SIZE,   pixelFormat.stencilBits,
+            GLX_SAMPLE_BUFFERS, 1,
+            GLX_SAMPLES,        outSamples,
+            None
+        };
+
+        int fbConfigsCount = 0;
+        GLXFBConfig* fbConfigs = glXChooseFBConfig(display, screen, framebufferAttribs, &fbConfigsCount);
+
+        if (fbConfigs != nullptr)
+        {
+            if (fbConfigsCount > 0)
+            {
+                framebufferConfig = fbConfigs[0];
+                if (framebufferConfig != 0)
+                    break;
+            }
+            XFree(fbConfigs);
+        }
+    }
+
+    if (framebufferConfig)
+    {
+        /* Choose XVisualInfo from FB config */
+        return glXGetVisualFromFBConfig(display, framebufferConfig);
+    }
+    else
+    {
+        /* Choose standard XVisualInfo structure */
+        int visualAttribs[] =
+        {
+            GLX_RGBA,
+            GLX_DOUBLEBUFFER,
+            GLX_RED_SIZE,       8,
+            GLX_GREEN_SIZE,     8,
+            GLX_BLUE_SIZE,      8,
+            GLX_ALPHA_SIZE,     (pixelFormat.colorBits == 32 ? 8 : 0),
+            GLX_DEPTH_SIZE,     pixelFormat.depthBits,
+            GLX_STENCIL_SIZE,   pixelFormat.stencilBits,
+            None
+        };
+
+        return glXChooseVisual(display, screen, visualAttribs);
+    }
+}
+
 
 /*
  * ======= Private: =======
@@ -108,11 +179,34 @@ bool LinuxGLContext::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
 
 bool LinuxGLContext::SetSwapInterval(int interval)
 {
-    /* Load GL extension "glXSwapIntervalSGI" to set v-sync interval */
-    if (glXSwapIntervalSGI || LoadSwapIntervalProcs())
+    /* Load GL extension "GLX_SGI/MESA/EXT_swap_control" to set v-sync interval */
+    LoadSwapIntervalProcs();
+
+    if (glXSwapIntervalMESA != nullptr)
+    {
+        /* Prefer MESA extension since SGI extension returns false for interval 0 */
+        return (glXSwapIntervalMESA(static_cast<unsigned int>(interval)) == 0);
+    }
+
+    if (glXSwapIntervalEXT != nullptr)
+    {
+        /* Can only assume this function succeeded as it doesn't return any status */
+        ::Display* display = glXGetCurrentDisplay();
+        ::GLXDrawable drawable = glXGetCurrentDrawable();
+        if (drawable)
+        {
+            glXSwapIntervalEXT(display, drawable, interval);
+            return true;
+        }
+    }
+
+    if (glXSwapIntervalSGI != nullptr)
+    {
+        /* Fallback to SGI extension. This is known to *not* support interval=0 */
         return (glXSwapIntervalSGI(interval) == 0);
-    else
-        return false;
+    }
+
+    return false;
 }
 
 void LinuxGLContext::CreateGLXContext(
@@ -123,15 +217,27 @@ void LinuxGLContext::CreateGLXContext(
 {
     LLGL_ASSERT_PTR(nativeHandle.display);
     LLGL_ASSERT_PTR(nativeHandle.window);
-    LLGL_ASSERT_PTR(nativeHandle.visual);
 
     GLXContext glcShared = (sharedContext != nullptr ? sharedContext->glc_ : nullptr);
 
     /* Get X11 display, window, and visual information */
     display_ = nativeHandle.display;
 
+    /* Ensure GLX is a supported X11 extension */
+    int errorBase = 0, eventBase = 0;
+    if (glXQueryExtension(display_, &errorBase, &eventBase) == False)
+        LLGL_TRAP("GLX extension is not supported by X11 implementation");
+
+    /* Get X11 visual information or choose it now */
+    ::XVisualInfo* visual = nativeHandle.visual;
+    if (visual == nullptr)
+    {
+        visual = LinuxGLContext::ChooseVisual(display_, nativeHandle.screen, pixelFormat, samples_);
+        LLGL_ASSERT(visual != nullptr, "failed to choose X11VisualInfo");
+    }
+
     /* Create intermediate GL context OpenGL context with X11 lib */
-    GLXContext intermediateGlc = CreateGLXContextCompatibilityProfile(nativeHandle.visual, nullptr);
+    GLXContext intermediateGlc = CreateGLXContextCompatibilityProfile(visual, nullptr);
 
     if (glXMakeCurrent(display_, nativeHandle.window, intermediateGlc) != True)
         Log::Errorf("glXMakeCurrent failed on GLX compatibility profile\n");

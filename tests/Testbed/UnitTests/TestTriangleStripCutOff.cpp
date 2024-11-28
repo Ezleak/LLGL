@@ -76,16 +76,8 @@ DEF_TEST( TriangleStripCutOff )
     for_range(i, numFormats)
     {
         psoDesc.indexFormat = indexFormats[i];
-        CreateGraphicsPSO(psoDesc, "psoStripCutOff", &pso[i]);
-
-        if (const Report* report = pso[i]->GetReport())
-        {
-            if (report->HasErrors())
-            {
-                Log::Errorf("PSO creation with index format LLGL::Format::%s failed:\n%s", ToString(indexFormats[i]), report->GetText());
-                return TestResult::FailedErrors;
-            }
-        }
+        const std::string psoName = "Test.StripCutOff.Format(" + std::string(ToString(indexFormats[i])) + ")";
+        CREATE_GRAPHICS_PSO_EXT(pso[i], psoDesc, psoName.c_str());
     }
 
     Texture* readbackTex[2] = {};
@@ -112,7 +104,7 @@ DEF_TEST( TriangleStripCutOff )
             }
             readbackTex[0] = CaptureFramebuffer(*cmdBuffer, swapChain->GetColorFormat(), opt.resolution);
 
-            // Draw first capture with undefined index format
+            // Draw second capture with fixed index format R16UInt (pso[1]) and R32UInt (pso[2])
             cmdBuffer->Clear(ClearFlags::Color);
             {
                 cmdBuffer->SetPipelineState(*pso[1]);

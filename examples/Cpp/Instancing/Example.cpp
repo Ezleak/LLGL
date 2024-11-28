@@ -6,8 +6,7 @@
  */
 
 #include <ExampleBase.h>
-#include <stb/stb_image.h>
-#include <FileUtils.h>
+#include <ImageReader.h>
 #include <LLGL/Display.h>
 
 
@@ -44,7 +43,7 @@ class Example_Instancing : public ExampleBase
     struct Settings
     {
         Gs::Matrix4f    vpMatrix;                           // View-projection matrix
-        Gs::Vector4f    viewPos;                            // Camera view position (in world spce)
+        Gs::Vector4f    viewPos;                            // Camera view position (in world space)
         float           fogColor[3] = { 0.3f, 0.3f, 0.3f };
         float           fogDensity  = 0.04f;
         float           animVec[2]  = { 0.0f, 0.0f };       // Animation vector to make the plants wave in the wind
@@ -74,9 +73,11 @@ public:
         resourceHeap->SetDebugName("ResourceHeap");
 
         // Show info
-        std::cout << "press LEFT/RIGHT MOUSE BUTTON to rotate the camera around the scene" << std::endl;
-        std::cout << "press R KEY to reload the shader program" << std::endl;
-        std::cout << "press SPACE KEY to switch between pipeline states with and without alpha-to-coverage" << std::endl;
+        LLGL::Log::Printf(
+            "press LEFT/RIGHT MOUSE BUTTON to rotate the camera around the scene\n"
+            "press R KEY to reload the shader program\n"
+            "press SPACE KEY to switch between pipeline states with and without alpha-to-coverage\n"
+        );
     }
 
 private:
@@ -210,14 +211,14 @@ private:
     {
         std::string filename;
 
-        std::vector<unsigned char> arrayImageBuffer;
+        std::vector<char> arrayImageBuffer;
 
         // Load all array images
-        int width = 0, height = 0;
+        std::uint32_t width = 0, height = 0;
 
-        auto numImages = (numPlantImages + 1);
+        std::uint32_t numImages = 0;
 
-        for (std::uint32_t i = 0; i < numImages; ++i)
+        for (std::uint32_t i = 0; i <= numPlantImages; ++i)
         {
             // Setup filename for "Plants_N.png" where N is from 0 to 9
             if (i < numPlantImages)
@@ -225,32 +226,28 @@ private:
             else
                 filename = "Grass.jpg";
 
-            filename = FindResourcePath(filename);
-
-            // Load all images from file (using STBI library, see https://github.com/nothings/stb)
-            int w = 0, h = 0, c = 0;
-            unsigned char* imageBuffer = stbi_load(filename.c_str(), &w, &h, &c, 4);
-            if (!imageBuffer)
-                throw std::runtime_error("failed to load texture from file: \"" + filename + "\"");
+            // Load image asset
+            ImageReader reader;
+            if (!reader.LoadFromFile(filename))
+                continue;
 
             // Copy image buffer into array image buffer
-            if ( ( width != 0 && height != 0 ) && ( width != w || height != h ) )
-                throw std::runtime_error("image size mismatch");
+            const LLGL::Extent3D imageExtent = reader.GetTextureDesc().extent;
+            if ( ( width != 0 && height != 0 ) && ( width != imageExtent.width || height != imageExtent.height ) )
+            {
+                LLGL::Log::Errorf("image size mismatch for image \"%s\"\n", filename.c_str());
+                continue;
+            }
 
-            width = w;
-            height = h;
+            width   = imageExtent.width;
+            height  = imageExtent.height;
 
-            auto imageBufferSize = w*h*4;
-            auto imageBufferOffset = arrayImageBuffer.size();
-            arrayImageBuffer.resize(imageBufferOffset + imageBufferSize);
-
-            ::memcpy(arrayImageBuffer.data() + imageBufferOffset, imageBuffer, imageBufferSize);
-
-            // Release temporary image data
-            stbi_image_free(imageBuffer);
+            reader.AppendImageDataTo(arrayImageBuffer);
 
             // Show info
-            std::cout << "loaded texture: " << filename << std::endl;
+            LLGL::Log::Printf("loaded texture: %s\n", filename.c_str());
+
+            ++numImages;
         }
 
         // Create array texture object with 'numImages' layers
@@ -367,7 +364,7 @@ private:
 
     void OnDrawFrame() override
     {
-        // Update scene animationa and user input
+        // Update scene animation and user input
         UpdateAnimation();
 
         static bool alphaToCoverageEnabled = true;
@@ -375,9 +372,9 @@ private:
         {
             alphaToCoverageEnabled = !alphaToCoverageEnabled;
             if (alphaToCoverageEnabled)
-                std::cout << "Alpha-To-Coverage Enabled" << std::endl;
+                LLGL::Log::Printf("Alpha-To-Coverage Enabled\n");
             else
-                std::cout << "Alpha-To-Coverage Disabled" << std::endl;
+                LLGL::Log::Printf("Alpha-To-Coverage Disabled\n");
         }
 
         commands->Begin();

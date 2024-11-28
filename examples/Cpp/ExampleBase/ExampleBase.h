@@ -17,8 +17,6 @@
 #include <LLGL/Container/ArrayView.h>
 #include <LLGL/Platform/Platform.h>
 #include <Gauss/Gauss.h>
-#include <iostream>
-#include <fstream>
 #include <vector>
 #include <random>
 #include <map>
@@ -158,6 +156,10 @@ private:
 
     std::uint32_t                               samples_            = 1;
 
+    LLGL::Extent2D                              initialResolution_;
+    bool                                        showTimeRecords_    = false;
+    bool                                        fullscreen_         = false;
+
 protected:
 
     friend class ResizeEventHandler;
@@ -194,9 +196,14 @@ protected:
     virtual void OnDrawFrame() = 0;
 
     // Callback when the window has been resized. Can also be detected by using a custom window event listener.
-    virtual void OnResize(const LLGL::Extent2D& resoluion);
+    virtual void OnResize(const LLGL::Extent2D& resolution);
 
 private:
+
+    static void MainLoopWrapper(void* args);
+
+    // Internal main loop. This is called manually on most platforms. With WebAssembly, it's passed to the browser glue code.
+    void MainLoop();
 
     // Internal function to load a shader.
     LLGL::Shader* LoadShaderInternal(
@@ -256,7 +263,7 @@ protected:
     ShaderPipeline LoadStandardShaderPipeline(const std::vector<LLGL::VertexFormat>& vertexFormats);
 
     // Throws an exception if the specified PSO creation failed.
-    void ThrowIfFailed(LLGL::PipelineState* pso);
+    bool ReportPSOErrors(const LLGL::PipelineState* pso);
 
     // Load image from file, create texture, upload image into texture, and generate MIP-maps.
     LLGL::Texture* LoadTexture(
@@ -274,16 +281,16 @@ protected:
     // Returns the aspect ratio of the swap-chain resolution (X:Y).
     float GetAspectRatio() const;
 
-    // Returns ture if OpenGL is used as rendering API.
+    // Returns true if OpenGL is used as rendering API.
     bool IsOpenGL() const;
 
-    // Returns ture if Vulkan is used as rendering API.
+    // Returns true if Vulkan is used as rendering API.
     bool IsVulkan() const;
 
-    // Returns ture if Direct3D is used as rendering API.
+    // Returns true if Direct3D is used as rendering API.
     bool IsDirect3D() const;
 
-    // Returns ture if Metal is used as rendering API.
+    // Returns true if Metal is used as rendering API.
     bool IsMetal() const;
 
     // Used by the window resize handler
@@ -293,10 +300,16 @@ protected:
     bool IsScreenOriginLowerLeft() const;
 
     // Returns a perspective projection with the specified parameters for the respective renderer.
-    Gs::Matrix4f PerspectiveProjection(float aspectRatio, float near, float far, float fov);
+    Gs::Matrix4f PerspectiveProjection(float aspectRatio, float near, float far, float fov) const;
 
-    // Returns an orthogonal projection with the speciifed parameters for the respective renderer.
-    Gs::Matrix4f OrthogonalProjection(float width, float height, float near, float far);
+    // Returns an orthogonal projection with the specified parameters for the respective renderer.
+    Gs::Matrix4f OrthogonalProjection(float width, float height, float near, float far) const;
+
+    // Returns a quoternion for the specified rotation
+    Gs::Quaternionf Rotation(float x, float y) const;
+
+    // Rotates the specified quaternion for a model-to-world transformation matrix.
+    Gs::Matrix4f RotateModel(Gs::Quaternionf& rotation, float dx, float dy) const;
 
     // Returns true if the specified shading language is supported.
     bool Supported(const LLGL::ShadingLanguage shadingLanguage) const;
@@ -398,12 +411,12 @@ int RunExample(int argc, char* argv[])
     try
     {
         ExampleBase::ParseProgramArgs(argc, argv);
-        T tutorial;
-        tutorial.Run();
+        T example;
+        example.Run();
     }
     catch (const std::exception& e)
     {
-        std::cerr << e.what() << std::endl;
+        LLGL::Log::Errorf("%s\n", e.what());
         #ifdef _WIN32
         system("pause");
         #endif

@@ -1,8 +1,6 @@
 // PBR GLSL Skybox Fragment Shader
 
-#version 450 core
-
-#define M_PI 3.141592654
+#version 410 core
 
 uniform Settings
 {

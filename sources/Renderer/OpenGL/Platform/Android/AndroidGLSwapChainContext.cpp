@@ -11,6 +11,8 @@
 #include "../../../../Core/CoreUtils.h"
 #include "../../../../Core/Exception.h"
 #include <LLGL/Platform/NativeHandle.h>
+#include <LLGL/TypeInfo.h>
+#include <LLGL/Canvas.h>
 
 
 namespace LLGL
@@ -33,6 +35,46 @@ bool GLSwapChainContext::MakeCurrentUnchecked(GLSwapChainContext* context)
 
 
 /*
+ * CanvasEventListener
+ */
+
+class AndroidGLSwapChainContext::CanvasEventListener final : public Canvas::EventListener
+{
+
+    public:
+
+        CanvasEventListener(AndroidGLSwapChainContext* context);
+
+        void OnInit(Canvas& sender) override;
+        void OnDestroy(Canvas& sender) override;
+
+    private:
+
+        AndroidGLSwapChainContext* context_ = nullptr;
+
+};
+
+AndroidGLSwapChainContext::CanvasEventListener::CanvasEventListener(AndroidGLSwapChainContext* context) :
+    context_ { context }
+{
+}
+
+void AndroidGLSwapChainContext::CanvasEventListener::OnInit(Canvas& sender)
+{
+    /* Re-initialize the shared EGLSurface when the ANativeWindow is re-initialized */
+    context_->InitEGLSurface(sender);
+    GLSwapChainContext::MakeCurrent(context_);
+}
+
+void AndroidGLSwapChainContext::CanvasEventListener::OnDestroy(Canvas& /*sender*/)
+{
+    /* Destroy the shared EGLSurface when the ANativeWindow is destroyed */
+    context_->DestroyEGLSurface();
+    GLSwapChainContext::MakeCurrent(nullptr);
+}
+
+
+/*
  * AndroidGLSwapChainContext class
  */
 
@@ -42,23 +84,33 @@ AndroidGLSwapChainContext::AndroidGLSwapChainContext(AndroidGLContext& context, 
     context_           { context.GetEGLContext() }
 {
     /* Get native surface handle */
-    NativeHandle nativeHandle;
+    NativeHandle nativeHandle = {};
     surface.GetNativeHandle(&nativeHandle, sizeof(nativeHandle));
 
-    /* Create drawable surface */
-    surface_ = eglCreateWindowSurface(display_, context.GetEGLConfig(), nativeHandle.window, nullptr);
-    if (!surface_)
-        LLGL_TRAP("eglCreateWindowSurface failed (%s)", EGLErrorToString());
+    /* Get or create drawable surface */
+    if (context.GetSharedEGLSurface() && nativeHandle.window == context.GetSharedEGLSurface()->GetNativeWindow())
+    {
+        /* Share surface with main context */
+        sharedSurface_ = context.GetSharedEGLSurface();
+    }
+    else
+    {
+        /* Create custom surface if different native window is specified */
+        sharedSurface_ = std::make_shared<AndroidSharedEGLSurface>(display_, context.GetEGLConfig(), nativeHandle.window);
+    }
+
+    /* Register event listener to re-create EGLSurface when the app destroys and re-initializes the ANativeWindow during pausing/resuming the app */
+    CastTo<Canvas>(surface).AddEventListener(std::make_shared<CanvasEventListener>(this));
 }
 
-AndroidGLSwapChainContext::~AndroidGLSwapChainContext()
+bool AndroidGLSwapChainContext::HasDrawable() const
 {
-    eglDestroySurface(display_, surface_);
+    return (sharedSurface_->GetEGLSurface() != nullptr);
 }
 
 bool AndroidGLSwapChainContext::SwapBuffers()
 {
-    eglSwapBuffers(display_, surface_);
+    eglSwapBuffers(display_, sharedSurface_->GetEGLSurface());
     return true;
 }
 
@@ -67,10 +119,25 @@ void AndroidGLSwapChainContext::Resize(const Extent2D& resolution)
     // dummy
 }
 
+void AndroidGLSwapChainContext::InitEGLSurface(Surface& surface)
+{
+    NativeHandle nativeHandle = {};
+    surface.GetNativeHandle(&nativeHandle, sizeof(nativeHandle));
+    sharedSurface_->InitEGLSurface(nativeHandle.window);
+}
+
+void AndroidGLSwapChainContext::DestroyEGLSurface()
+{
+    sharedSurface_->DestroyEGLSurface();
+}
+
 bool AndroidGLSwapChainContext::MakeCurrentEGLContext(AndroidGLSwapChainContext* context)
 {
     if (context)
-        return eglMakeCurrent(context->display_, context->surface_, context->surface_, context->context_);
+    {
+        EGLSurface nativeSurface = context->sharedSurface_->GetEGLSurface();
+        return eglMakeCurrent(context->display_, nativeSurface, nativeSurface, context->context_);
+    }
     else
         return eglMakeCurrent(eglGetDisplay(EGL_DEFAULT_DISPLAY), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }

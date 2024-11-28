@@ -37,7 +37,7 @@ class RenderingDebugger;
 /* ----- Enumerations ----- */
 
 /**
-\brief Shading language version enumation.
+\brief Shading language version enumeration.
 \remarks These enumeration entries can be casted to an integer using the bitmask ShadingLanguage::VersionBitmask to get the respective version number:
 \code
 // 'versionNo' will have the value 330
@@ -229,7 +229,7 @@ struct RenderSystemFlags
 
 /**
 \brief Renderer identification number enumeration.
-\remarks There are several IDs for reserved future renderes, which are currently not supported (and maybe never supported).
+\remarks There are several IDs for reserved future renderers, which are currently not supported (and maybe never supported).
 You can use an ID greater than 'RendererID::Reserved' (which has a value of 0x000000ff) for your own renderer.
 Or use one of the pre-defined IDs if you want to implement your own OpenGL/ Direct3D or whatever renderer.
 \see RendererInfo::rendererID
@@ -240,15 +240,24 @@ struct RendererID
 
     static constexpr int Null       = 0x00000001; //!< ID number for a Null renderer. This renderer does not render anything but provides the same interface for debugging purposes.
     static constexpr int OpenGL     = 0x00000002; //!< ID number for an OpenGL renderer.
-    static constexpr int OpenGLES1  = 0x00000003; //!< ID number for an OpenGL ES 1 renderer.
-    static constexpr int OpenGLES2  = 0x00000004; //!< ID number for an OpenGL ES 2 renderer.
-    static constexpr int OpenGLES3  = 0x00000005; //!< ID number for an OpenGL ES 3 renderer.
+    static constexpr int OpenGLES   = 0x00000003; //!< ID number for an OpenGL ES renderer.
+    static constexpr int WebGL      = 0x00000004; //!< ID number for a WebGL renderer.
+    static constexpr int WebGPU     = 0x00000005; //!< ID number for a WebGPU renderer.
     static constexpr int Direct3D9  = 0x00000006; //!< ID number for a Direct3D 9 renderer.
     static constexpr int Direct3D10 = 0x00000007; //!< ID number for a Direct3D 10 renderer.
     static constexpr int Direct3D11 = 0x00000008; //!< ID number for a Direct3D 11 renderer.
     static constexpr int Direct3D12 = 0x00000009; //!< ID number for a Direct3D 12 renderer.
     static constexpr int Vulkan     = 0x0000000A; //!< ID number for a Vulkan renderer.
     static constexpr int Metal      = 0x0000000B; //!< ID number for a Metal renderer.
+
+    LLGL_DEPRECATED("LLGL::RendererID::OpenGLES1 is deprecated since 0.04b; Use LLGL::RendererID::OpenGLES instead!", "OpenGLES")
+    static constexpr int OpenGLES1  = RendererID::OpenGLES;
+
+    LLGL_DEPRECATED("LLGL::RendererID::OpenGLES2 is deprecated since 0.04b; Use LLGL::RendererID::OpenGLES instead!", "OpenGLES")
+    static constexpr int OpenGLES2  = RendererID::OpenGLES;
+
+    LLGL_DEPRECATED("LLGL::RendererID::OpenGLES3 is deprecated since 0.04b; Use LLGL::RendererID::OpenGLES instead!", "OpenGLES")
+    static constexpr int OpenGLES3  = RendererID::OpenGLES;
 
     static constexpr int Reserved   = 0x000000FF; //!< Highest ID number for reserved future renderers. Value is 0x000000ff.
 };
@@ -357,7 +366,6 @@ struct RenderSystemDescriptor
     \see rendererConfigSize
     \see RendererConfigurationVulkan
     \see RendererConfigurationOpenGL
-    \see RendererConfigurationOpenGLES3
     */
     const void*         rendererConfig      = nullptr;
 
@@ -441,10 +449,12 @@ struct RenderSystemDescriptor
     \endcode
     \note Only supported on: Android.
     */
-    android_app*    androidApp;
+    android_app*        androidApp          = nullptr;
 
     #endif // /LLGL_OS_ANDROID
 };
+
+LLGL_DEPRECATED_IGNORE_PUSH()
 
 /**
 \brief Contains the attributes for all supported rendering features.
@@ -452,15 +462,6 @@ struct RenderSystemDescriptor
 */
 struct RenderingFeatures
 {
-    LLGL_DEPRECATED_IGNORE_PUSH()
-
-    // Declared to ignore initialization warning of deprecated members
-    RenderingFeatures() = default;
-    RenderingFeatures(const RenderingFeatures&) = default;
-    RenderingFeatures& operator = (const RenderingFeatures&) = default;
-
-    LLGL_DEPRECATED_IGNORE_POP()
-
     /**
     \brief Specifies whether render targets (also "framebuffer objects") are supported.
     \todo Deprecate this field: All backends should support render targets.
@@ -628,8 +629,10 @@ struct RenderingFeatures
 
     /**
     \brief Specifies whether stream-output is supported.
+    \note Only supported with: Direct3D 12, Direct3D 11, OpenGL.
     \see VertexShaderAttributes::outputAttribs
     \see CommandBuffer::BeginStreamOutput
+    \see CommandBuffer::DrawStreamOutput
     \see RenderingLimits::maxStreamOutputs
     */
     bool hasStreamOutputs               = false;
@@ -662,6 +665,8 @@ struct RenderingFeatures
     */
     bool hasRenderCondition             = false;
 };
+
+LLGL_DEPRECATED_IGNORE_POP()
 
 /**
 \brief Contains all rendering limitations such as maximum buffer size, maximum texture resolution etc.
@@ -851,7 +856,7 @@ struct RenderingCapabilities
     /**
     \brief Screen coordinate system origin.
     \remarks This determines the native coordinate space of viewports, scissors, and framebuffers.
-    If the native screen origin is lower-left, LLGL emulates it to always maintain the upper-left as the screen origin.
+    If the native screen origin is in the bottom-left corner, LLGL emulates it to always maintain the upper-left corner as its screen origin.
     */
     ScreenOrigin                    screenOrigin        = ScreenOrigin::UpperLeft;
 
@@ -923,7 +928,7 @@ LLGL::ValidateRenderingCaps(
     myRenderer->GetRenderingCaps(),
     myRequirements,
     [](const std::string& info, const std::string& attrib) {
-        std::cerr << info << ": " << attrib << std::endl;
+        ::fprintf(stderr, "%s: %s\n", info.c_str(), attrib.c_str());
         return true;
     }
 );

@@ -169,6 +169,7 @@ namespace LLGL
             NativeLLGL.SetResource(descriptor, resource.NativeBase);
         }
 
+        [Obsolete("LLGL.CommandBuffer.ResetResourceSlots is deprecated since 0.04b; No need to reset resource slots manually anymore!")]
         public void ResetResourceSlots(ResourceType resourceType, int firstSlot, int numSlots, BindFlags bindFlags, StageFlags stageFlags)
         {
             NativeLLGL.ResetResourceSlots(resourceType, firstSlot, numSlots, (int)bindFlags, (int)stageFlags);
@@ -353,6 +354,11 @@ namespace LLGL
         public void DrawIndexedIndirect(Buffer buffer, long offset, int numCommands, int stride)
         {
             NativeLLGL.DrawIndexedIndirectExt(buffer.Native, offset, numCommands, stride);
+        }
+
+        public void DrawStreamOutput()
+        {
+            NativeLLGL.DrawStreamOutput();
         }
 
         public void Dispatch(int numWorkGroupsX, int numWorkGroupsY, int numWorkGroupsZ)

@@ -12,6 +12,7 @@
 #include <LLGL/Fence.h>
 #include "../OpenGL.h"
 #include <string>
+#include <cstdint>
 
 
 namespace LLGL
@@ -30,11 +31,14 @@ class GLFence final : public Fence
         ~GLFence();
 
         void Submit();
-        bool Wait(GLuint64 timeout);
+
+        bool Wait(std::uint64_t timeout);
 
     private:
 
+        #if GL_ARB_sync
         GLsync      sync_ = 0;
+        #endif
 
         #ifdef LLGL_DEBUG
         // Only provide name in debug mode, to keep fence objects as lightweight as possible

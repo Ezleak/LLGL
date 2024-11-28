@@ -74,6 +74,12 @@ DECL_TEST( Uniforms );
 DECL_TEST( ShadowMapping );
 DECL_TEST( ViewportAndScissor );
 DECL_TEST( ResourceBinding );
+DECL_TEST( ResourceArrays );
+DECL_TEST( StreamOutput );
+DECL_TEST( ResourceCopy );
+
+// C99 tests
+DECL_TEST( OffscreenC99 );
 
 #undef DECL_TEST
 

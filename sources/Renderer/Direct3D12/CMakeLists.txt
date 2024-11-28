@@ -5,7 +5,9 @@
 # Licensed under the terms of the BSD 3-Clause license (see LICENSE.txt).
 #
 
-cmake_minimum_required(VERSION 3.7)
+if (NOT DEFINED CMAKE_MINIMUM_REQUIRED_VERSION)
+    cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+endif()
 
 project(LLGL_Direct3D12)
 
@@ -65,6 +67,11 @@ source_group("Include\\Platform"            FILES ${FilesIncludeD3D12})
 # === Projects ===
 
 if(LLGL_BUILD_RENDERER_DIRECT3D12)
+    # Adopt define from LLGL_DXCommon lib
+    if(LLGL_D3D12_ENABLE_DXCOMPILER)
+        ADD_DEFINE(LLGL_D3D12_ENABLE_DXCOMPILER)
+    endif()
+
     # Direct3D 12 Renderer
     add_llgl_module(LLGL_Direct3D12 LLGL_BUILD_RENDERER_DIRECT3D12 "${FilesD3D12}")
     target_link_libraries(LLGL_Direct3D12 LLGL LLGL_DXCommon d3d12 dxgi D3DCompiler)

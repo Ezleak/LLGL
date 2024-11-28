@@ -12,6 +12,7 @@
 #include "../../../RenderSystemUtils.h"
 #include "../../../../Core/CoreUtils.h"
 #include "../../../../Core/Assertion.h"
+#include "../../../../Platform/Android/AndroidApp.h"
 #include <LLGL/RendererConfiguration.h>
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
 #include <LLGL/Utils/ForRange.h>
@@ -108,8 +109,8 @@ bool AndroidGLContext::SelectConfig(const GLPixelFormat& pixelFormat)
             EGL_GREEN_SIZE,     8,
             EGL_BLUE_SIZE,      8,
             EGL_ALPHA_SIZE,     8,
-            EGL_DEPTH_SIZE,     pixelFormat.depthBits,
-            EGL_STENCIL_SIZE,   pixelFormat.stencilBits,
+            EGL_DEPTH_SIZE,     24,//pixelFormat.depthBits, //TODO: currently doesn't work when default context is created and these bits are zero
+            EGL_STENCIL_SIZE,   8,//pixelFormat.stencilBits,
             EGL_SAMPLE_BUFFERS, 1,
             EGL_SAMPLES,        samples_,
             EGL_NONE
@@ -212,10 +213,28 @@ void AndroidGLContext::CreateContext(
 
     if (context_ == EGL_NO_CONTEXT)
         LLGL_TRAP("eglCreateContext failed (%s)", EGLErrorToString());
+
+    if (sharedContext != nullptr)
+    {
+        /* Share EGLSurface with shared context */
+        surface_ = sharedContext->GetSharedEGLSurface();
+    }
+    else
+    {
+        /* Create initial surface; This will be shared with subsequently created swap-chains (i.e. AndroidGLSwapChainContext) */
+        android_app* appState = AndroidApp::Get().GetState();
+        LLGL_ASSERT_PTR(appState);
+        surface_ = std::make_shared<AndroidSharedEGLSurface>(display_, config_, appState->window);
+    }
+
+    /* Make new context current to enable further initialization with GLES functions */
+    EGLSurface nativeSurface = surface_->GetEGLSurface();
+    eglMakeCurrent(display_, nativeSurface, nativeSurface, context_);
 }
 
 void AndroidGLContext::DeleteContext()
 {
+    surface_.reset();
     eglDestroyContext(display_, context_);
 }
 

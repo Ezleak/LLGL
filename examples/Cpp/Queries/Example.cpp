@@ -7,6 +7,7 @@
 
 #include <ExampleBase.h>
 #include <chrono>
+#include <thread>
 
 
 class Example_Queries : public ExampleBase
@@ -18,7 +19,6 @@ class Example_Queries : public ExampleBase
     LLGL::PipelineState*    scenePipeline           = nullptr;
 
     LLGL::PipelineLayout*   pipelineLayout          = nullptr;
-    LLGL::ResourceHeap*     resourceHeap            = nullptr;
 
     LLGL::Buffer*           vertexBuffer            = nullptr;
     LLGL::Buffer*           constantBuffer          = nullptr;
@@ -63,10 +63,9 @@ public:
         shaderPipeline = LoadStandardShaderPipeline({ vertexFormat });
         CreatePipelines();
         CreateQueries();
-        CreateResourceHeaps();
 
         // Show info
-        std::cout << "press SPACE KEY to enable/disable animation of occluder" << std::endl;
+        LLGL::Log::Printf("press SPACE KEY to enable/disable animation of occluder\n");
     }
 
     LLGL::VertexFormat CreateBuffers()
@@ -91,7 +90,7 @@ public:
     void CreatePipelines()
     {
         // Create pipeline layout
-        pipelineLayout = renderer->CreatePipelineLayout(LLGL::Parse("heap{cbuffer(0):vert:frag}"));
+        pipelineLayout = renderer->CreatePipelineLayout(LLGL::Parse("cbuffer(1):vert:frag"));
 
         // Create graphics pipeline for occlusion query
         LLGL::GraphicsPipelineDescriptor pipelineDesc;
@@ -143,26 +142,32 @@ public:
         timerQuery = renderer->CreateQueryHeap(queryDesc);
     }
 
-    void CreateResourceHeaps()
-    {
-        // Create resource heap for constant buffer
-        resourceHeap = renderer->CreateResourceHeap(pipelineLayout, { constantBuffer });
-    }
-
     std::uint64_t GetAndSyncQueryResult(LLGL::QueryHeap* query)
     {
+        #ifdef __APPLE__
+        return 0; //TODO: QueryResult not implemented on macOS/iOS
+        #endif
+
         // Wait until query result is available and return result
         std::uint64_t result = 0;
 
         if (query->GetType() == LLGL::QueryType::PipelineStatistics)
         {
             LLGL::QueryPipelineStatistics statistics;
-            while (!commandQueue->QueryResult(*query, 0, 1, &statistics, sizeof(statistics))) { /* wait */ }
+            while (!commandQueue->QueryResult(*query, 0, 1, &statistics, sizeof(statistics)))
+            {
+                // Wait and return control to other threads
+                std::this_thread::yield();
+            }
             result = statistics.inputAssemblyPrimitives;
         }
         else
         {
-            while (!commandQueue->QueryResult(*query, 0, 1, &result, sizeof(result))) { /* wait */ }
+            while (!commandQueue->QueryResult(*query, 0, 1, &result, sizeof(result)))
+            {
+                // Wait and return control to other threads
+                std::this_thread::yield();
+            }
         }
 
         return result;
@@ -170,27 +175,35 @@ public:
 
     void PrintQueryResults()
     {
+        #ifdef __APPLE__
+        return; //TODO: QueryResult not implemented on macOS/iOS
+        #endif
+
         // Query pipeline statistics results
         LLGL::QueryPipelineStatistics stats;
         while (!commandQueue->QueryResult(*geometryQuery, 0, 1, &stats, sizeof(stats)))
         {
-            /* wait */
+            // Wait and return control to other threads
+            std::this_thread::yield();
         }
 
         // Query timing results
         std::uint64_t elapsedTime = 0;
         while (!commandQueue->QueryResult(*timerQuery, 0, 1, &elapsedTime, sizeof(elapsedTime)))
         {
-            /* wait */
+            // Wait and return control to other threads
+            std::this_thread::yield();
         }
 
         // Print result
-        std::cout << "input assembly: " << stats.inputAssemblyPrimitives;
-        std::cout << ", vertex invocations: " << stats.vertexShaderInvocations;
-        std::cout << ", fragment invocations: " << stats.fragmentShaderInvocations;
-        std::cout << ", timing: " << static_cast<double>(elapsedTime)/1000000.0 << " ms";
-        std::cout << "        \r";
-        std::flush(std::cout);
+        LLGL::Log::Printf(
+            "input assembly: %u, vertex invocations: %u, fragment invocations: %u, timing: %f ms        \r",
+            static_cast<unsigned>(stats.inputAssemblyPrimitives),
+            static_cast<unsigned>(stats.vertexShaderInvocations),
+            static_cast<unsigned>(stats.fragmentShaderInvocations),
+            static_cast<double>(elapsedTime)/1000000.0
+        );
+        ::fflush(stdout);
     }
 
     void SetBoxTransformAndColor(const Gs::Matrix4f& matrix, const LLGL::ColorRGBAf& color)
@@ -239,7 +252,7 @@ private:
 
         // Set resources
         commands->SetPipelineState(*occlusionPipeline);
-        commands->SetResourceHeap(*resourceHeap);
+        commands->SetResource(0, *constantBuffer);
 
         // Draw occluder box
         SetBoxTransformAndColor(modelTransform[0], { 1, 1, 1 });
@@ -287,7 +300,7 @@ private:
                 // Set buffers
                 commands->SetVertexBuffer(*vertexBuffer);
 
-                // Start with qeometry query
+                // Start with geometry query
                 commands->BeginQuery(*geometryQuery);
                 {
                     commands->SetViewport(swapChain->GetResolution());

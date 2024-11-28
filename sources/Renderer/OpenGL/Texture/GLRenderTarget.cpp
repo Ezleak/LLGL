@@ -85,18 +85,42 @@ const RenderPass* GLRenderTarget::GetRenderPass() const
     return renderPass_;
 }
 
+bool GLRenderTarget::CanResolveMultisampledFBO() const
+{
+    return (framebufferResolve_.Valid() && !drawBuffersResolve_.empty());
+}
+
 void GLRenderTarget::ResolveMultisampled(GLStateManager& stateMngr)
 {
-    if (framebufferResolve_.Valid() && !drawBuffersResolve_.empty())
+    if (CanResolveMultisampledFBO())
     {
         stateMngr.BindFramebuffer(GLFramebufferTarget::DrawFramebuffer, framebufferResolve_.GetID());
         stateMngr.BindFramebuffer(GLFramebufferTarget::ReadFramebuffer, framebuffer_.GetID());
 
-        for (GLenum buf : drawBuffersResolve_)
+        #if LLGL_WEBGL
+        /* If there are more than one attachment, we have to swap them in and out for WebGL */
+        if (drawBuffersResolve_.size() > 1)
         {
-            glReadBuffer(buf);
-            GLProfile::DrawBuffer(buf);
-            GLFramebuffer::Blit(resolution_[0], resolution_[1], GL_COLOR_BUFFER_BIT);
+            LLGL_ASSERT(resolveAttachments_.size() == drawBuffersResolve_.size());
+            for_range(i, drawBuffersResolve_.size())
+            {
+                glReadBuffer(drawBuffersResolve_[i]);
+
+                const GLFramebufferAttachment& attachment = resolveAttachments_[i];
+                GLFramebuffer::AttachTexture(*(attachment.texture), GL_COLOR_ATTACHMENT0, attachment.level, attachment.layer, GL_DRAW_FRAMEBUFFER);
+
+                GLFramebuffer::Blit(resolution_[0], resolution_[1], GL_COLOR_BUFFER_BIT);
+            }
+        }
+        else
+        #endif // /LLGL_WEBGL
+        {
+            for (GLenum buf : drawBuffersResolve_)
+            {
+                glReadBuffer(buf);
+                GLProfile::DrawBuffer(buf);
+                GLFramebuffer::Blit(resolution_[0], resolution_[1], GL_COLOR_BUFFER_BIT);
+            }
         }
 
         stateMngr.BindFramebuffer(GLFramebufferTarget::ReadFramebuffer, 0);
@@ -171,7 +195,8 @@ void GLRenderTarget::CreateFramebufferWithAttachments(const RenderTargetDescript
     }
 
     /* Create secondary FBO if there are any resolve targets */
-    if (NumActiveResolveAttachments(desc) > 0)
+    const std::uint32_t numResolveAttachments = NumActiveResolveAttachments(desc);
+    if (numResolveAttachments > 0)
     {
         /* Create secondary FBO if standard multi-sampling is enabled */
         framebufferResolve_.GenFramebuffer();
@@ -179,30 +204,45 @@ void GLRenderTarget::CreateFramebufferWithAttachments(const RenderTargetDescript
         /* Bind multi-sampled FBO */
         GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::DrawFramebuffer, framebufferResolve_.GetID());
         {
+            /* For WebGL, we swap the attachments in and out of GL_COLOR_ATTACHMENT0 binding point if we have more than one attachment */
+            #if LLGL_WEBGL
+            const bool isAttachmentListSeparated = (numResolveAttachments > 1);
+            #else
+            constexpr bool isAttachmentListSeparated = false;
+            #endif
+
             /* Attach all color resolve targets */
             for_range(colorTarget, numColorAttachments)
             {
                 if (desc.resolveAttachments[colorTarget].texture != nullptr)
-                    BuildResolveAttachment(desc.resolveAttachments[colorTarget], colorTarget);
+                    BuildResolveAttachment(desc.resolveAttachments[colorTarget], colorTarget, isAttachmentListSeparated);
             }
 
-            /* Set draw buffers for this framebuffer is multi-sampling is enabled */
-            SetGLDrawBuffers(drawBuffersResolve_);
-            GLThrowIfFramebufferStatusFailed("color attachments to multi-sample framebuffer object (FBO) failed");
+            if (isAttachmentListSeparated)
+            {
+                /* Set draw buffer only for the first attachment as we swap them in and out at runtime */
+                GLProfile::DrawBuffer(drawBuffersResolve_.empty() ? GL_NONE : GL_COLOR_ATTACHMENT0);
+            }
+            else
+            {
+                /* Set draw buffers for this framebuffer if multi-sampling is enabled */
+                SetGLDrawBuffers(drawBuffersResolve_);
+                GLThrowIfFramebufferStatusFailed("color attachments to multi-sample framebuffer object (FBO) failed");
+            }
         }
     }
 }
 
 void GLRenderTarget::CreateFramebufferWithNoAttachments()
 {
-    #ifdef GL_ARB_framebuffer_no_attachments
+    #if LLGL_GLEXT_FRAMEBUFFER_NO_ATTACHMENTS
     if (HasExtension(GLExt::ARB_framebuffer_no_attachments))
     {
         /* Set default framebuffer parameters */
         framebuffer_.FramebufferParameters(resolution_[0], resolution_[1], /*layers:*/ 1, samples_, /*fixedSampleLocations:*/ 0);
     }
     else
-    #endif // /GL_ARB_framebuffer_no_attachments
+    #endif // /LLGL_GLEXT_FRAMEBUFFER_NO_ATTACHMENTS
     {
         /* Bind primary FBO and create dummy renderbuffer attachment */
         GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::DrawFramebuffer, framebuffer_.GetID());
@@ -216,37 +256,58 @@ void GLRenderTarget::CreateFramebufferWithNoAttachments()
 void GLRenderTarget::BuildColorAttachment(const AttachmentDescriptor& attachmentDesc, std::uint32_t colorTarget)
 {
     const GLenum binding = AllocColorAttachmentBinding(colorTarget);
-    if (auto* texture = attachmentDesc.texture)
+    if (attachmentDesc.texture != nullptr)
         BuildAttachmentWithTexture(binding, attachmentDesc);
     else
         BuildAttachmentWithRenderbuffer(binding, attachmentDesc.format);
 }
 
-void GLRenderTarget::BuildResolveAttachment(const AttachmentDescriptor& attachmentDesc, std::uint32_t colorTarget)
+void GLRenderTarget::BuildResolveAttachment(const AttachmentDescriptor& attachmentDesc, std::uint32_t colorTarget, bool isAttachmentListSeparated)
 {
     LLGL_ASSERT_PTR(attachmentDesc.texture);
-    BuildAttachmentWithTexture(AllocResolveAttachmentBinding(colorTarget), attachmentDesc);
+    const GLenum binding = AllocResolveAttachmentBinding(colorTarget);
+    #if LLGL_WEBGL
+    if (isAttachmentListSeparated)
+    {
+        /* For WebGL, we swap the resolve attachments in and out dynamically to always use GL_COLOR_ATTACHMENT0 binding point */
+        GLFramebufferAttachment attachmentGL = {};
+        BuildAttachmentWithTexture(binding, attachmentDesc, &attachmentGL);
+        resolveAttachments_.push_back(attachmentGL);
+    }
+    else
+    #endif // /LLGL_WEBGL
+    {
+        /* Attach the texture to the current FBO */
+        BuildAttachmentWithTexture(binding, attachmentDesc);
+    }
 }
 
 void GLRenderTarget::BuildDepthStencilAttachment(const AttachmentDescriptor& attachmentDesc)
 {
-    if (auto* texture = attachmentDesc.texture)
+    if (const Texture* texture = attachmentDesc.texture)
         BuildAttachmentWithTexture(AllocDepthStencilAttachmentBinding(texture->GetFormat()), attachmentDesc);
     else
         BuildAttachmentWithRenderbuffer(AllocDepthStencilAttachmentBinding(attachmentDesc.format), attachmentDesc.format);
 }
 
-void GLRenderTarget::BuildAttachmentWithTexture(GLenum binding, const AttachmentDescriptor& attachmentDesc)
+void GLRenderTarget::BuildAttachmentWithTexture(GLenum binding, const AttachmentDescriptor& attachmentDesc, GLFramebufferAttachment* outAttachmentGL)
 {
     LLGL_ASSERT_PTR(attachmentDesc.texture);
     auto* textureGL = LLGL_CAST(GLTexture*, attachmentDesc.texture);
 
     /* Validate resolution for MIP-map level */
-    auto mipLevel = attachmentDesc.mipLevel;
+    const std::uint32_t mipLevel = attachmentDesc.mipLevel;
     ValidateMipResolution(*textureGL, mipLevel);
 
     /* Attach texture to framebuffer */
-    GLFramebuffer::AttachTexture(*textureGL, binding, static_cast<GLint>(mipLevel), static_cast<GLint>(attachmentDesc.arrayLayer));
+    if (outAttachmentGL != nullptr)
+    {
+        outAttachmentGL->texture    = textureGL;
+        outAttachmentGL->level      = static_cast<GLint>(mipLevel);
+        outAttachmentGL->layer      = static_cast<GLint>(attachmentDesc.arrayLayer);
+    }
+    else
+        GLFramebuffer::AttachTexture(*textureGL, binding, static_cast<GLint>(mipLevel), static_cast<GLint>(attachmentDesc.arrayLayer));
 }
 
 void GLRenderTarget::BuildAttachmentWithRenderbuffer(GLenum binding, Format format)

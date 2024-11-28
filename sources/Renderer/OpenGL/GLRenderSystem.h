@@ -27,9 +27,7 @@
 #include "Texture/GLTexture.h"
 #include "Texture/GLSampler.h"
 #include "Texture/GLRenderTarget.h"
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-#   include "Texture/GL2XSampler.h"
-#endif
+#include "Texture/GLEmulatedSampler.h"
 
 #include "RenderState/GLQueryHeap.h"
 #include "RenderState/GLFence.h"
@@ -51,6 +49,9 @@ namespace LLGL
 {
 
 
+class GLContext;
+struct GLPixelFormat;
+
 class GLRenderSystem final : public RenderSystem
 {
 
@@ -65,12 +66,17 @@ class GLRenderSystem final : public RenderSystem
 
     private:
 
-        void CreateGLContextDependentDevices(GLStateManager& stateManager);
+        #include <LLGL/Backend/RenderSystem.Internal.inl>
+
+    private:
+
+        // Creates a GL context once or creates a new one if there is no compatible one with the specified pixel format.
+        void CreateGLContextOnce();
+
+        // Updates the renderer capabilities information and enables the debug layer for the new GLContext if enabled.
+        void RegisterNewGLContext(GLContext& context, const GLPixelFormat& pixelFormat);
 
         void EnableDebugCallback(bool enable = true);
-
-        void QueryRendererInfo();
-        void QueryRenderingCaps();
 
         GLBuffer* CreateGLBuffer(const BufferDescriptor& desc, const void* initialData);
 
@@ -81,18 +87,16 @@ class GLRenderSystem final : public RenderSystem
         /* ----- Hardware object containers ----- */
 
         GLContextManager                        contextMngr_;
+        GLCommandQueue                          commandQueue_;
         bool                                    debugContext_   = false;
 
         HWObjectContainer<GLSwapChain>          swapChains_;
-        HWObjectInstance<GLCommandQueue>        commandQueue_;
         HWObjectContainer<GLCommandBuffer>      commandBuffers_;
         HWObjectContainer<GLBuffer>             buffers_;
         HWObjectContainer<GLBufferArray>        bufferArrays_;
         HWObjectContainer<GLTexture>            textures_;
         HWObjectContainer<GLSampler>            samplers_;
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        HWObjectContainer<GL2XSampler>          samplersGL2X_;
-        #endif
+        HWObjectContainer<GLEmulatedSampler>    emulatedSamplers_;
         HWObjectContainer<GLRenderPass>         renderPasses_;
         HWObjectContainer<GLRenderTarget>       renderTargets_;
         HWObjectContainer<GLShader>             shaders_;

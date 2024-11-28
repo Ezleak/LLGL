@@ -10,7 +10,7 @@
 #include "../Ext/GLExtensionRegistry.h"
 #include "../GLCore.h"
 #include "../GLTypes.h"
-#include "../GLProfile.h"
+#include "../Profile/GLProfile.h"
 #include "../../PipelineStateUtils.h"
 #include "../../../Core/MacroUtils.h"
 #include "../Texture/GLRenderTarget.h"
@@ -143,14 +143,14 @@ void GLBlendState::BindDrawBufferStates(GLStateManager& stateMngr)
         if (HasExtension(GLExt::ARB_draw_buffers_blend))
         {
             /* Bind blend states for respective draw buffers directly via extension */
-            for (GLuint i = 0; i < numDrawBuffers_; ++i)
+            for_range(i, numDrawBuffers_)
                 BindIndexedDrawBufferState(drawBuffers_[i], i);
         }
         else
         #endif // /GL_ARB_draw_buffers_blend
         {
             /* Bind blend states with emulated draw buffer setting */
-            for (GLuint i = 0; i < numDrawBuffers_; ++i)
+            for_range(i, numDrawBuffers_)
             {
                 GLProfile::DrawBuffer(GLTypes::ToColorAttachment(i));
                 BindDrawBufferState(drawBuffers_[i]);
@@ -176,14 +176,14 @@ void GLBlendState::BindDrawBufferColorMasks(GLStateManager& stateMngr)
         if (HasExtension(GLExt::EXT_draw_buffers2))
         {
             /* Bind color mask for respective draw buffers directly via extension */
-            for (GLuint i = 0; i < numDrawBuffers_; ++i)
+            for_range(i, numDrawBuffers_)
                 BindIndexedDrawBufferColorMask(drawBuffers_[i], i);
         }
         else
         #endif // /GL_EXT_draw_buffers2
         {
             /* Bind color masks with emulated draw buffer setting */
-            for (GLuint i = 0; i < numDrawBuffers_; ++i)
+            for_range(i, numDrawBuffers_)
             {
                 GLProfile::DrawBuffer(GLTypes::ToColorAttachment(i));
                 BindDrawBufferColorMask(drawBuffers_[i]);
@@ -213,7 +213,7 @@ void GLBlendState::BindDrawBufferState(const GLDrawBufferState& state)
 //TODO: GL_BLEND should be enabled/disabled with state manager
 void GLBlendState::BindIndexedDrawBufferState(const GLDrawBufferState& state, GLuint index)
 {
-    #ifdef LLGL_GLEXT_DRAW_BUFFERS_BLEND
+    #if LLGL_GLEXT_DRAW_BUFFERS_BLEND
 
     glColorMaski(index, state.colorMask[0], state.colorMask[1], state.colorMask[2], state.colorMask[3]);
     if (state.blendEnabled)
@@ -235,11 +235,11 @@ void GLBlendState::BindDrawBufferColorMask(const GLDrawBufferState& state)
 
 void GLBlendState::BindIndexedDrawBufferColorMask(const GLDrawBufferState& state, GLuint index)
 {
-    #ifdef LLGL_GLEXT_DRAW_BUFFERS2
+    #if LLGL_GLEXT_DRAW_BUFFERS_INDEXED
 
     glColorMaski(index, state.colorMask[0], state.colorMask[1], state.colorMask[2], state.colorMask[3]);
 
-    #endif // /LLGL_GLEXT_DRAW_BUFFERS2
+    #endif // /LLGL_GLEXT_DRAW_BUFFERS_INDEXED
 }
 
 

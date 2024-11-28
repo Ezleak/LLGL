@@ -19,6 +19,7 @@
 #include <LLGL/SamplerFlags.h>
 #include <LLGL/ShaderFlags.h>
 #include <LLGL/ShaderReflection.h>
+#include <LLGL/SystemValue.h>
 
 
 namespace LLGL
@@ -82,6 +83,13 @@ bool IsDepthFormat(GLenum internalFormat);
 
 // Returns true if the specified GL internal format is a depth-and-stencil format.
 bool IsDepthStencilFormat(GLenum internalFormat);
+
+// Returns the binding parameter name for the specified buffer target,
+// e.g. GL_UNIFOMR_BUFFER to GL_UNIFORM_BUFFER_BINDING, used for glGetIntegerv().
+GLenum BufferTargetToBindingPname(GLenum target);
+
+// Converts a vertex output system value to its GLSL built-in identifier or null if there is no such identifier.
+const char* SystemValueToString(SystemValue systemValue, ShaderType shaderType);
 
 
 } // /namespace GLTypes

@@ -10,28 +10,20 @@
 
 
 // Enable multi-sampling
-#define ENABLE_MULTISAMPLING
+#define ENABLE_MULTISAMPLING        1
 
 // Enable custom multi-sampling by rendering directly into a multi-sample texture
-//#define ENABLE_CUSTOM_MULTISAMPLING
+#define ENABLE_CUSTOM_MULTISAMPLING (ENABLE_MULTISAMPLING && 0)
 
 // Enable depth texture instead of depth buffer for render target
-#define ENABLE_DEPTH_TEXTURE
-
-// Enables constant buffer view (CBV) ranges
-#define ENABLE_CBUFFER_RANGE
+#define ENABLE_DEPTH_TEXTURE        0
 
 // Enables the resource heap. Otherwise, all resources are bound to the graphics pipeline individually.
-//#define ENABLE_RESOURCE_HEAP
+#define ENABLE_RESOURCE_HEAP        0
 
+// Enables constant buffer view (CBV) ranges
+#define ENABLE_CBUFFER_RANGE        (ENABLE_RESOURCE_HEAP && 1)
 
-#if defined ENABLE_CUSTOM_MULTISAMPLING && !defined ENABLE_MULTISAMPLING
-#undef ENABLE_CUSTOM_MULTISAMPLING
-#endif
-
-#if defined ENABLE_CBUFFER_RANGE && !defined ENABLE_RESOURCE_HEAP
-#undef ENABLE_CBUFFER_RANGE
-#endif
 
 class Example_RenderTarget : public ExampleBase
 {
@@ -47,18 +39,18 @@ class Example_RenderTarget : public ExampleBase
 
     LLGL::Texture*          colorMap                = nullptr;
     LLGL::Sampler*          samplerState            = nullptr;
-    #ifdef ENABLE_RESOURCE_HEAP
+    #if ENABLE_RESOURCE_HEAP
     LLGL::ResourceHeap*     resourceHeap            = nullptr;
     #endif
 
     LLGL::RenderTarget*     renderTarget            = nullptr;
     LLGL::Texture*          renderTargetTex         = nullptr;
 
-    #ifdef ENABLE_DEPTH_TEXTURE
+    #if ENABLE_DEPTH_TEXTURE
     LLGL::Texture*          renderTargetDepthTex    = nullptr;
     #endif
 
-    #ifdef ENABLE_CUSTOM_MULTISAMPLING
+    #if ENABLE_CUSTOM_MULTISAMPLING
     LLGL::Texture*          dummyTexMS              = nullptr;
     LLGL::Texture*          renderTargetTexMS       = nullptr;
     #endif
@@ -67,12 +59,12 @@ class Example_RenderTarget : public ExampleBase
 
     Gs::Vector2f            rotation                = { Gs::Deg2Rad(-20.0f), Gs::Deg2Rad(-30.0f) };
 
-    #ifdef ENABLE_CBUFFER_RANGE
+    #if ENABLE_CBUFFER_RANGE
     std::uint64_t           cbufferAlignment        = 0;
     std::vector<char>       cbufferData;
     #endif
 
-    #ifdef ENABLE_CUSTOM_MULTISAMPLING
+    #if ENABLE_CUSTOM_MULTISAMPLING
     const LLGL::Extent2D    renderTargetSize        = { 64, 64 };
     #else
     const LLGL::Extent2D    renderTargetSize        = { 512, 512 };
@@ -96,14 +88,16 @@ public:
         CreateColorMap();
         CreateRenderTarget();
         CreatePipelines();
-        #ifdef ENABLE_RESOURCE_HEAP
+        #if ENABLE_RESOURCE_HEAP
         CreateResourceHeap();
         #endif
 
         // Show some information
-        std::cout << "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube" << std::endl;
-        std::cout << "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube" << std::endl;
-        std::cout << "press RETURN KEY to save the render target texture to a PNG file" << std::endl;
+        LLGL::Log::Printf(
+            "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube\n"
+            "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube\n"
+            "press RETURN KEY to save the render target texture to a PNG file\n"
+        );
     }
 
 private:
@@ -116,7 +110,7 @@ private:
         vertexFormat.AppendAttribute({ "normal",   LLGL::Format::RGB32Float });
         vertexFormat.AppendAttribute({ "texCoord", LLGL::Format::RG32Float  });
 
-        // Initialize vertices (scale texture-coordiantes a little bit, to show the texture border)
+        // Initialize vertices (scale texture-coordinates a little bit, to show the texture border)
         auto vertices = GenerateTexturedCubeVertices();
 
         constexpr float borderSize = 0.02f;
@@ -127,7 +121,7 @@ private:
         vertexBuffer = CreateVertexBuffer(vertices, vertexFormat);
         indexBuffer = CreateIndexBuffer(GenerateTexturedCubeTriangleIndices(), LLGL::Format::R32UInt);
 
-        #ifdef ENABLE_CBUFFER_RANGE
+        #if ENABLE_CBUFFER_RANGE
 
         // Allocate CPU local buffer for shader settings with alignment (usually 256 bytes for constant buffers)
         const auto& caps = renderer->GetRenderingCaps();
@@ -151,7 +145,7 @@ private:
     {
         LLGL::ShaderMacro psDefines[] =
         {
-            #ifdef ENABLE_CUSTOM_MULTISAMPLING
+            #if ENABLE_CUSTOM_MULTISAMPLING
             LLGL::ShaderMacro{ "ENABLE_CUSTOM_MULTISAMPLING" },
             #endif
             LLGL::ShaderMacro{}
@@ -163,7 +157,7 @@ private:
             shaderPipeline.vs = LoadShader({ LLGL::ShaderType::Vertex,   "Example.hlsl", "VS", "vs_5_0" }, { vertexFormat });
             shaderPipeline.ps = LoadShader({ LLGL::ShaderType::Fragment, "Example.hlsl", "PS", "ps_5_0" }, {}, psDefines);
         }
-        else if (Supported(LLGL::ShadingLanguage::GLSL))
+        else if (Supported(LLGL::ShadingLanguage::GLSL) || Supported(LLGL::ShadingLanguage::ESSL))
         {
             // Patch clipping origin in vertex shader in case the GL server does not support GL_ARB_clip_control
             shaderPipeline.vs = LoadShaderAndPatchClippingOrigin({ LLGL::ShaderType::Vertex,   "Example.vert" }, { vertexFormat });
@@ -195,7 +189,7 @@ private:
         // Create pipeline layout
         LLGL::PipelineLayoutDescriptor layoutDesc;
         {
-            #ifdef ENABLE_RESOURCE_HEAP
+            #if ENABLE_RESOURCE_HEAP
             layoutDesc.heapBindings =
             #else
             layoutDesc.bindings =
@@ -204,7 +198,7 @@ private:
                 LLGL::BindingDescriptor{ "Settings",        LLGL::ResourceType::Buffer,   LLGL::BindFlags::ConstantBuffer, LLGL::StageFlags::FragmentStage | LLGL::StageFlags::VertexStage, 3                           },
                 LLGL::BindingDescriptor{ "colorMapSampler", LLGL::ResourceType::Sampler,  0,                               LLGL::StageFlags::FragmentStage,                                 1                           },
                 LLGL::BindingDescriptor{ "colorMap",        LLGL::ResourceType::Texture,  LLGL::BindFlags::Sampled,        LLGL::StageFlags::FragmentStage,                                 (combinedSampler ? 1u : 2u) },
-                #ifdef ENABLE_CUSTOM_MULTISAMPLING
+                #if ENABLE_CUSTOM_MULTISAMPLING
                 LLGL::BindingDescriptor{ "colorMapMS",      LLGL::ResourceType::Texture,  LLGL::BindFlags::Sampled,        LLGL::StageFlags::FragmentStage,                                 3                           },
                 #endif
             };
@@ -228,19 +222,21 @@ private:
             pipelineDesc.rasterizer.multiSampleEnabled  = (GetSampleCount() > 1);
         }
         pipelines[1] = renderer->CreatePipelineState(pipelineDesc);
+        ReportPSOErrors(pipelines[0]);
 
         // Create graphics pipeline for render target
         {
             pipelineDesc.renderPass = renderTarget->GetRenderPass();
             pipelineDesc.viewports  = { renderTarget->GetResolution() };
 
-            #ifdef ENABLE_MULTISAMPLING
+            #if ENABLE_MULTISAMPLING
             pipelineDesc.rasterizer.multiSampleEnabled = true;
             #else
             pipelineDesc.rasterizer.multiSampleEnabled = false;
             #endif
         }
         pipelines[0] = renderer->CreatePipelineState(pipelineDesc);
+        ReportPSOErrors(pipelines[1]);
     }
 
     void CreateColorMap()
@@ -251,13 +247,7 @@ private:
         // Create common sampler state for all textures
         LLGL::SamplerDescriptor samplerDesc;
         {
-            #if !defined LLGL_OS_IOS && !defined LLGL_OS_ANDROID
-            // Clamp to border is not supported on mobile platforms
-            samplerDesc.addressModeU    = LLGL::SamplerAddressMode::Border;
-            samplerDesc.addressModeV    = LLGL::SamplerAddressMode::Border;
-            #endif
-            samplerDesc.maxAnisotropy   = 8;
-            samplerDesc.borderColor[3]  = 1.0f;
+            samplerDesc.maxAnisotropy = 8;
         }
         samplerState = renderer->CreateSampler(samplerDesc);
     }
@@ -265,7 +255,7 @@ private:
     void CreateRenderTarget()
     {
         // Initialize multisampling
-        #ifdef ENABLE_MULTISAMPLING
+        #if ENABLE_MULTISAMPLING
         const std::uint32_t samples = 8;
         #else
         const std::uint32_t samples = 1;
@@ -277,7 +267,7 @@ private:
         );
         renderTargetTex->SetDebugName("RenderTargetTex");
 
-        #ifdef ENABLE_DEPTH_TEXTURE
+        #if ENABLE_DEPTH_TEXTURE
 
         // Create depth texture
         LLGL::TextureDescriptor depthTexDesc;
@@ -296,7 +286,7 @@ private:
 
         #endif // /ENABLE_DEPTH_TEXTURE
 
-        #ifdef ENABLE_CUSTOM_MULTISAMPLING
+        #if ENABLE_CUSTOM_MULTISAMPLING
 
         dummyTexMS = renderer->CreateTexture(
             LLGL::Texture2DMSDesc(LLGL::Format::R8UNorm, renderTargetSize.width, renderTargetSize.height, samples)
@@ -315,7 +305,7 @@ private:
             renderTargetDesc.resolution = renderTargetSize;
             renderTargetDesc.samples    = samples;
 
-            #ifdef ENABLE_CUSTOM_MULTISAMPLING
+            #if ENABLE_CUSTOM_MULTISAMPLING
 
             // Only render into custom multi-sampled texture
             renderTargetDesc.colorAttachments[0] = renderTargetTexMS;
@@ -336,10 +326,10 @@ private:
 
             #endif // /ENABLE_CUSTOM_MULTISAMPLING
 
-            #ifdef ENABLE_DEPTH_TEXTURE
+            #if ENABLE_DEPTH_TEXTURE
             renderTargetDesc.depthStencilAttachment = renderTargetDepthTex;
             #else
-            renderTargetDesc.depthStencilAttachment = LLGL::Format::D32Float;
+            //renderTargetDesc.depthStencilAttachment = LLGL::Format::D32Float;
             #endif
         }
         renderTarget = renderer->CreateRenderTarget(renderTargetDesc);
@@ -348,7 +338,7 @@ private:
         renderTargetProj = PerspectiveProjection(1.0f, 0.1f, 100.0f, Gs::Deg2Rad(45.0f));
     }
 
-    #ifdef ENABLE_RESOURCE_HEAP
+    #if ENABLE_RESOURCE_HEAP
 
     void CreateResourceHeap()
     {
@@ -359,7 +349,7 @@ private:
             constantBuffer, samplerState, renderTargetTex, /*renderTargetTex,*/
         };
 
-        #ifdef ENABLE_CBUFFER_RANGE
+        #if ENABLE_CBUFFER_RANGE
 
         auto& cbufferView0 = resourceViews[0].bufferView;
         {
@@ -394,7 +384,7 @@ private:
         // Update model transformation with render-target projection
         UpdateModelTransform(settings, renderTargetProj, rotation.y, Gs::Vector3f(1));
 
-        #ifdef ENABLE_CUSTOM_MULTISAMPLING
+        #if ENABLE_CUSTOM_MULTISAMPLING
 
         // Disable multi-sample texture in fragment shader
         settings.useTexture2DMS = 0;
@@ -404,7 +394,7 @@ private:
 
     void UpdateSettingsForScreen(Settings& settings)
     {
-        #ifdef ENABLE_CUSTOM_MULTISAMPLING
+        #if ENABLE_CUSTOM_MULTISAMPLING
 
         // Enable multi-sample texture in fragment shader
         settings.useTexture2DMS = 1;
@@ -429,7 +419,7 @@ private:
 
     void DrawSceneIntoTexture()
     {
-        #ifndef ENABLE_CBUFFER_RANGE
+        #if !ENABLE_CBUFFER_RANGE
 
         // Update constant buffer with current settings
         Settings settings;
@@ -451,7 +441,7 @@ private:
             commands->SetIndexBuffer(*indexBuffer);
             commands->SetVertexBuffer(*vertexBuffer);
 
-            #ifdef ENABLE_RESOURCE_HEAP
+            #if ENABLE_RESOURCE_HEAP
             if (resourceHeap)
             {
                 // Set graphics pipeline resources
@@ -464,7 +454,7 @@ private:
                 commands->SetResource(0, *constantBuffer);
                 commands->SetResource(1, *samplerState);
                 commands->SetResource(2, *colorMap);
-                #ifdef ENABLE_CUSTOM_MULTISAMPLING
+                #if ENABLE_CUSTOM_MULTISAMPLING
                 commands->SetResource(3, *dummyTexMS);
                 #endif
             }
@@ -477,7 +467,7 @@ private:
 
     void DrawSceneOntoScreen()
     {
-        #ifndef ENABLE_CBUFFER_RANGE
+        #if !ENABLE_CBUFFER_RANGE
 
         // Update model transformation with standard projection
         Settings settings;
@@ -503,7 +493,7 @@ private:
             //       since the previous pipeline has no dynamic viewport!
             commands->SetViewport(swapChain->GetResolution());
 
-            #ifdef ENABLE_RESOURCE_HEAP
+            #if ENABLE_RESOURCE_HEAP
             if (resourceHeap)
             {
                 // Set graphics pipeline resources
@@ -518,7 +508,7 @@ private:
 
                 // Set render-target texture
                 commands->SetResource(2, *renderTargetTex);
-                #ifdef ENABLE_CUSTOM_MULTISAMPLING
+                #if ENABLE_CUSTOM_MULTISAMPLING
                 commands->SetResource(3, *renderTargetTexMS);
                 #endif
             }
@@ -529,7 +519,7 @@ private:
         commands->EndRenderPass();
     }
 
-    #ifdef ENABLE_CBUFFER_RANGE
+    #if ENABLE_CBUFFER_RANGE
 
     Settings& GetCbufferData(std::size_t idx)
     {
@@ -547,7 +537,7 @@ private:
 
         commands->Begin();
         {
-            #ifdef ENABLE_CBUFFER_RANGE
+            #if ENABLE_CBUFFER_RANGE
 
             // Update constant buffer with all settings at once
             UpdateSettingsForTexture(GetCbufferData(0));

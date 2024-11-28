@@ -15,10 +15,6 @@
 #include <memory>
 #include <vector>
 
-#ifdef LLGL_ENABLE_JIT_COMPILER
-#   include "../../../JIT/JITProgram.h"
-#endif
-
 
 namespace LLGL
 {
@@ -33,9 +29,7 @@ class GLSwapChain;
 class GLStateManager;
 class GLRenderPass;
 class GLShaderPipeline;
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-class GL2XSampler;
-#endif
+class GLEmulatedSampler;
 
 using GLVirtualCommandBuffer = VirtualCommandBuffer<GLOpcode>;
 
@@ -70,28 +64,6 @@ class GLDeferredCommandBuffer final : public GLCommandBuffer
             return flags_;
         }
 
-        #ifdef LLGL_ENABLE_JIT_COMPILER
-
-        // Returns the just-in-time compiled command buffer that can be executed natively, or null if not available.
-        inline const std::unique_ptr<JITProgram>& GetExecutable() const
-        {
-            return executable_;
-        }
-
-        // Returns the maximum number of viewports that are set in this command buffer.
-        inline std::uint32_t GetMaxNumViewports() const
-        {
-            return maxNumViewports_;
-        }
-
-        // Returns the maximum number of scissors that are set in this command buffer.
-        inline std::uint32_t GetMaxNumScissors() const
-        {
-            return maxNumScissors_;
-        }
-
-        #endif // /LLGL_ENABLE_JIT_COMPILER
-
     private:
 
         void BindBufferBase(const GLBufferTarget bufferTarget, const GLBuffer& bufferGL, std::uint32_t slot);
@@ -99,29 +71,22 @@ class GLDeferredCommandBuffer final : public GLCommandBuffer
         void BindTexture(GLTexture& textureGL, std::uint32_t slot);
         void BindImageTexture(const GLTexture& textureGL, std::uint32_t slot);
         void BindSampler(const GLSampler& samplerGL, std::uint32_t slot);
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        void BindGL2XSampler(const GL2XSampler& samplerGL2X, std::uint32_t slot);
-        #endif
+        void BindEmulatedSampler(const GLEmulatedSampler& emulatedSamplerGL, std::uint32_t slot);
 
         void FlushMemoryBarriers();
 
-        /* Allocates only an opcode for empty commands */
+        // Allocates only an opcode for empty commands.
         void AllocOpcode(const GLOpcode opcode);
 
-        /* Allocates a new command and stores the specified opcode */
+        // Allocates a new command and stores the specified opcode.
         template <typename TCommand>
         TCommand* AllocCommand(const GLOpcode opcode, std::size_t payloadSize = 0);
 
     private:
 
-        long                        flags_                  = 0;
-        GLVirtualCommandBuffer      buffer_;
-
-        #ifdef LLGL_ENABLE_JIT_COMPILER
-        std::unique_ptr<JITProgram> executable_;
-        std::uint32_t               maxNumViewports_        = 0;
-        std::uint32_t               maxNumScissors_         = 0;
-        #endif // /LLGL_ENABLE_JIT_COMPILER
+        long                    flags_                  = 0;
+        GLVirtualCommandBuffer  buffer_;
+        GLRenderTarget*         renderTargetToResolve_  = nullptr;
 
 };
 

@@ -1,6 +1,6 @@
 // PBR GLSL Mesh Fragment Shader
 
-#version 450 core
+#version 410 core
 
 #define M_PI 3.141592654
 
@@ -56,6 +56,12 @@ float NormalDistribution(float a, float NdotH)
     return a2 / (M_PI * d * d);
 }
 
+vec3 SampleEnvironment(float roughness, vec3 reflection)
+{
+    float lod = roughness * mipCount;
+    return texture(skyBox, vec4(reflection, float(skyboxLayer)), lod).rgb;
+}
+
 vec3 BRDF(vec3 albedo, vec3 normal, vec3 viewVec, vec3 lightVec, float roughness, float metallic)
 {
     // Compute color at normal incidence
@@ -81,13 +87,10 @@ vec3 BRDF(vec3 albedo, vec3 normal, vec3 viewVec, vec3 lightVec, float roughness
     // Compute specular term and accumulate light
     vec3 specular = F * G * D / (4.0 * NdotV);
 
-    return (albedo * NdotL + specular);
-}
+    vec3 reflection = -normalize(reflect(viewVec, normal));
+    vec3 lighting = SampleEnvironment(roughness, reflection);
 
-vec3 SampleEnvironment(float roughness, vec3 reflection)
-{
-    float lod = roughness * mipCount;
-    return texture(skyBox, vec4(reflection, float(skyboxLayer)), lod).rgb;
+    return (albedo * (NdotL + lighting * 0.2) + specular * metallic);
 }
 
 void main()
@@ -97,13 +100,10 @@ void main()
     // Sample textures
     vec4 albedo = texture(colorMaps, texCoord);
     vec3 normal = texture(normalMaps, texCoord).rgb;
-    float roughness = 0.0;//0.6;//texture(roughnessMaps, texCoord).r;
+    float roughness = texture(roughnessMaps, texCoord).r;
     float metallic = texture(metallicMaps, texCoord).r;
 
     // Compute final normal
-    #if 1
-    normal = normalize(inp.normal);
-    #else
     mat3 tangentSpace = mat3(
         normalize(inp.bitangent),
         normalize(inp.tangent),
@@ -111,23 +111,13 @@ void main()
     );
 
     normal = normalize(tangentSpace * (normal * 2.0 - 1.0));
-    #endif
 
     // Get view and light directions
     vec3 viewPos = (cMatrix * vec4(0, 0, 0, 1)).xyz;
     vec3 viewVec = normalize(viewPos - inp.worldPos.xyz);
 
-    // Sample incoming light from environment map
-    vec3 reflection = -normalize(reflect(viewVec, normal));
-    vec3 lighting = SampleEnvironment(roughness, reflection);
-
     // Compute microfacet BRDF
     vec3 color = BRDF(albedo.rgb, normal, viewVec, lightDir.xyz, roughness, metallic);
-
-    #if 1
-    //color += lighting * 0.2;
-    color = lighting;
-    #endif
 
     outColor = vec4(color, albedo.a);
 }

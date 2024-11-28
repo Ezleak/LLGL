@@ -6,12 +6,12 @@
  */
 
 #include "D3D12PipelineLayout.h"
-#include "../Shader/D3D12RootSignature.h"
 #include "../Shader/D3D12Shader.h"
 #include "../Texture/D3D12Sampler.h"
 #include "../D3DX12/d3dx12.h"
 #include "../D3D12ObjectUtils.h"
 #include "../../DXCommon/DXCore.h"
+#include "../../ResourceUtils.h"
 #include "../../../Core/Assertion.h"
 #include "../../../Core/CoreUtils.h"
 #include <LLGL/Utils/ForRange.h>
@@ -143,7 +143,14 @@ ComPtr<ID3D12RootSignature> D3D12PipelineLayout::CreateRootSignatureWith32BitCon
     long cbufferStageFlags = 0;
     std::vector<const D3D12ConstantBufferReflection*> cbufferReflections;
 
-    auto FindCbufferField = [&cbufferReflections, &cbufferStageFlags](const std::string& name) -> std::pair<const D3D12_ROOT_CONSTANTS*, const D3D12ConstantReflection*>
+    struct D3D12CbufferField
+    {
+        const D3D12_ROOT_CONSTANTS*     constants;
+        const D3D12ConstantReflection*  reflection;
+        D3D12_SHADER_VISIBILITY         visibility;
+    };
+
+    auto FindCbufferField = [&cbufferReflections, &cbufferStageFlags](const std::string& name) -> D3D12CbufferField
     {
         for (const D3D12ConstantBufferReflection* cbuffer : cbufferReflections)
         {
@@ -152,11 +159,16 @@ ComPtr<ID3D12RootSignature> D3D12PipelineLayout::CreateRootSignatureWith32BitCon
                 if (field.name == name)
                 {
                     cbufferStageFlags |= cbuffer->stageFlags;
-                    return { &(cbuffer->rootConstants), &field };
+                    return D3D12CbufferField
+                    {
+                        &(cbuffer->rootConstants),
+                        &field,
+                        D3D12RootParameter::FindSuitableVisibility(cbuffer->stageFlags)
+                    };
                 }
             }
         }
-        return { nullptr, nullptr };
+        return {};
     };
 
     for (D3D12Shader* shader : shaders)
@@ -180,13 +192,13 @@ ComPtr<ID3D12RootSignature> D3D12PipelineLayout::CreateRootSignatureWith32BitCon
 
     const std::size_t rootParamOffset = rootSignaturePermutation.GetNumRootParameters();
 
-    auto FindOrAppendRootParameter = [&rootSignaturePermutation, rootParamOffset](const D3D12_ROOT_CONSTANTS& rootConstants) -> UINT
+    auto FindOrAppendRootParameter = [&rootSignaturePermutation, rootParamOffset](const D3D12_ROOT_CONSTANTS& rootConstants, D3D12_SHADER_VISIBILITY visibility) -> UINT
     {
         UINT rootParamIndex = -1;
-        if (rootSignaturePermutation.FindCompatibleRootParameter(rootConstants, rootParamOffset, &rootParamIndex) == nullptr)
+        if (rootSignaturePermutation.FindCompatibleRootParameter(rootConstants, visibility, rootParamOffset, &rootParamIndex) == nullptr)
         {
             D3D12RootParameter* rootParam = rootSignaturePermutation.AppendRootParameter(&rootParamIndex);
-            rootParam->InitAsConstants(rootConstants);
+            rootParam->InitAsConstants(rootConstants, visibility);
         }
         return rootParamIndex;
     };
@@ -194,22 +206,20 @@ ComPtr<ID3D12RootSignature> D3D12PipelineLayout::CreateRootSignatureWith32BitCon
     for_range(i, uniforms_.size())
     {
         /* Find constant buffer field for specified uniform name */
-        const auto field = FindCbufferField(uniforms_[i].name);
-        const D3D12_ROOT_CONSTANTS*     rootConstants   = field.first;
-        const D3D12ConstantReflection*  fieldReflection = field.second;
-        LLGL_ASSERT_PTR(rootConstants);
-        LLGL_ASSERT_PTR(fieldReflection);
+        const D3D12CbufferField field = FindCbufferField(uniforms_[i].name);
+        LLGL_ASSERT_PTR(field.constants);
+        LLGL_ASSERT_PTR(field.reflection);
 
         /* Find or append root parameter for root constants */
-        UINT                rootParamIndex  = FindOrAppendRootParameter(*rootConstants);
+        UINT                rootParamIndex  = FindOrAppendRootParameter(*field.constants, field.visibility);
         D3D12RootParameter& rootParam       = rootSignaturePermutation[rootParamIndex];
 
         /* Build root constant map for current uniform descriptor */
         D3D12RootConstantLocation& location = outRootConstantMap[i];
         {
             location.index          = rootParamIndex;
-            location.num32BitValues = std::max(1u, GetAlignedSize(fieldReflection->size, 4u) / 4u);
-            location.wordOffset     = fieldReflection->offset / 4;
+            location.num32BitValues = std::max(1u, GetAlignedSize(field.reflection->size, 4u) / 4u);
+            location.wordOffset     = field.reflection->offset / 4;
         }
     }
 
@@ -239,34 +249,36 @@ void D3D12PipelineLayout::BuildRootSignature(
     D3D12RootSignature&             rootSignature,
     const PipelineLayoutDescriptor& desc)
 {
+    const DynamicVector<BindingDescriptor> expandedHeapBindings = GetExpandedHeapDescriptors(desc.heapBindings);
+
     /* Build root parameter table for each descriptor range type */
-    descriptorHeapMap_.resize(desc.heapBindings.size());
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_CBV,     desc, ResourceType::Buffer,  BindFlags::ConstantBuffer, descriptorHeapLayout_.numBufferCBV );
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc, ResourceType::Buffer,  BindFlags::Sampled,        descriptorHeapLayout_.numBufferSRV );
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc, ResourceType::Texture, BindFlags::Sampled,        descriptorHeapLayout_.numTextureSRV);
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc, ResourceType::Buffer,  BindFlags::Storage,        descriptorHeapLayout_.numBufferUAV );
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc, ResourceType::Texture, BindFlags::Storage,        descriptorHeapLayout_.numTextureUAV);
-    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, desc, ResourceType::Sampler, 0,                         descriptorHeapLayout_.numSamplers  );
+    descriptorHeapMap_.resize(expandedHeapBindings.size());
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_CBV,     expandedHeapBindings, ResourceType::Buffer,  BindFlags::ConstantBuffer, descriptorHeapLayout_.numBufferCBV );
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     expandedHeapBindings, ResourceType::Buffer,  BindFlags::Sampled,        descriptorHeapLayout_.numBufferSRV );
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     expandedHeapBindings, ResourceType::Texture, BindFlags::Sampled,        descriptorHeapLayout_.numTextureSRV);
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     expandedHeapBindings, ResourceType::Buffer,  BindFlags::Storage,        descriptorHeapLayout_.numBufferUAV );
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     expandedHeapBindings, ResourceType::Texture, BindFlags::Storage,        descriptorHeapLayout_.numTextureUAV);
+    BuildHeapRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, expandedHeapBindings, ResourceType::Sampler, 0,                         descriptorHeapLayout_.numSamplers  );
 
     /* Build root parameter for each descriptor range type */
     descriptorMap_.resize(desc.bindings.size());
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_CBV,     desc, ResourceType::Buffer,  BindFlags::ConstantBuffer, descriptorLayout_.numBufferCBV);
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc, ResourceType::Buffer,  BindFlags::Sampled,        descriptorLayout_.numBufferSRV);
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc, ResourceType::Texture, BindFlags::Sampled,        descriptorLayout_.numTextureSRV);
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc, ResourceType::Buffer,  BindFlags::Storage,        descriptorLayout_.numBufferUAV);
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc, ResourceType::Texture, BindFlags::Storage,        descriptorLayout_.numTextureUAV);
-    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, desc, ResourceType::Sampler, 0,                         descriptorLayout_.numSamplers);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_CBV,     desc.bindings, ResourceType::Buffer,  BindFlags::ConstantBuffer, descriptorLayout_.numBufferCBV);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc.bindings, ResourceType::Buffer,  BindFlags::Sampled,        descriptorLayout_.numBufferSRV);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     desc.bindings, ResourceType::Texture, BindFlags::Sampled,        descriptorLayout_.numTextureSRV);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc.bindings, ResourceType::Buffer,  BindFlags::Storage,        descriptorLayout_.numBufferUAV);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_UAV,     desc.bindings, ResourceType::Texture, BindFlags::Storage,        descriptorLayout_.numTextureUAV);
+    BuildRootParameterTables(rootSignature, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, desc.bindings, ResourceType::Sampler, 0,                         descriptorLayout_.numSamplers);
 
     /* Build root parameter for each standalone descriptor */
     rootParameterMap_.resize(desc.bindings.size());
-    BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_CBV, desc, ResourceType::Buffer, BindFlags::ConstantBuffer);
+    BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_CBV, desc.bindings, ResourceType::Buffer, BindFlags::ConstantBuffer);
 
     //TODO: re-enable until LLGL can translate restrictions on root parameters; see CanResourceHaveRootParameter()
-    //BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_SRV, desc, ResourceType::Buffer, BindFlags::Sampled);
-    //BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_UAV, desc, ResourceType::Buffer, BindFlags::Storage);
+    //BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_SRV, desc.bindings, ResourceType::Buffer, BindFlags::Sampled);
+    //BuildRootParameters(rootSignature, D3D12_ROOT_PARAMETER_TYPE_UAV, desc.bindings, ResourceType::Buffer, BindFlags::Storage);
 
     /* Build static samplers */
-    BuildStaticSamplers(rootSignature, desc, numStaticSamplers_);
+    BuildStaticSamplers(rootSignature, desc.staticSamplers, numStaticSamplers_);
 
     /* Cache uniform descriptors */
     uniforms_ = desc.uniforms;
@@ -277,17 +289,38 @@ static bool IsFilteredBinding(const BindingDescriptor& bindingDesc, const Resour
     return (bindingDesc.type == resourceType && (bindFlags == 0 || (bindingDesc.bindFlags & bindFlags) != 0));
 }
 
-void D3D12PipelineLayout::BuildHeapRootParameterTables(
-    D3D12RootSignature&             rootSignature,
-    D3D12_DESCRIPTOR_RANGE_TYPE     descRangeType,
-    const PipelineLayoutDescriptor& layoutDesc,
-    const ResourceType              resourceType,
-    long                            bindFlags,
-    UINT&                           outCounter)
+static D3D12_RESOURCE_STATES GetD3D12BindingResourceState(const BindingDescriptor& bindingDesc)
 {
-    for_range(i, layoutDesc.heapBindings.size())
+    if (bindingDesc.stageFlags != 0)
     {
-        const BindingDescriptor& binding = layoutDesc.heapBindings[i];
+        if ((bindingDesc.bindFlags & BindFlags::ConstantBuffer) != 0 && bindingDesc.type == ResourceType::Buffer)
+            return D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        if ((bindingDesc.bindFlags & BindFlags::Storage) != 0)
+            return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        if ((bindingDesc.bindFlags & BindFlags::Sampled) != 0)
+        {
+            if (bindingDesc.stageFlags == StageFlags::FragmentStage)
+                return D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            else if ((bindingDesc.stageFlags & StageFlags::FragmentStage) == 0)
+                return D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            else
+                return (D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+    }
+    return D3D12_RESOURCE_STATE_COMMON;
+}
+
+void D3D12PipelineLayout::BuildHeapRootParameterTables(
+    D3D12RootSignature&                 rootSignature,
+    D3D12_DESCRIPTOR_RANGE_TYPE         descRangeType,
+    const ArrayView<BindingDescriptor>& bindingDescs,
+    const ResourceType                  resourceType,
+    long                                bindFlags,
+    UINT&                               outCounter)
+{
+    for_range(i, bindingDescs.size())
+    {
+        const BindingDescriptor& binding = bindingDescs[i];
         if (IsFilteredBinding(binding, resourceType, bindFlags))
         {
             /* Build root parameter table entry for currently seelcted resource binding */
@@ -295,7 +328,7 @@ void D3D12PipelineLayout::BuildHeapRootParameterTables(
                 /*rootSignature:*/          rootSignature,
                 /*descRangeType:*/          descRangeType,
                 /*bindingDesc:*/            binding,
-                /*maxNumDescriptorRanges:*/ static_cast<UINT>(layoutDesc.heapBindings.size()),
+                /*maxNumDescriptorRanges:*/ static_cast<UINT>(bindingDescs.size()),
                 /*outLocation:*/            descriptorHeapMap_[i]
             );
 
@@ -320,7 +353,7 @@ void D3D12PipelineLayout::BuildHeapRootParameterTableEntry(
     if (D3D12RootParameter* rootParam = rootSignature.FindCompatibleRootParameter(descRangeType))
     {
         /* Append descriptor range to previous root parameter */
-        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max(1u, bindingDesc.arraySize));
+        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max<UINT>(1u, bindingDesc.arraySize));
     }
     else
     {
@@ -328,13 +361,16 @@ void D3D12PipelineLayout::BuildHeapRootParameterTableEntry(
         UINT rootParamIndex = 0;
         rootParam = rootSignature.AppendRootParameter(&rootParamIndex);
         rootParam->InitAsDescriptorTable(maxNumDescriptorRanges);
-        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max(1u, bindingDesc.arraySize));
+        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max<UINT>(1u, bindingDesc.arraySize));
 
         /* Store root parameter index */
         UINT8& rootParamIndexStored = rootParameterIndices_.rootParamDescriptorHeaps[GetDescriptorTypeShift(descRangeType)];
         LLGL_ASSERT(rootParamIndexStored == D3D12RootParameterIndices::invalidIndex || rootParamIndexStored == rootParamIndex);
         rootParamIndexStored = rootParamIndex;
     }
+
+    /* Store target state the binding must be in when it's bound */
+    outLocation.state = GetD3D12BindingResourceState(bindingDesc);
 
     /* Cache binding flags in the same order root parameters are build */
     descriptorHeapLayout_.GetDescriptorLocation(descRangeType, outLocation);
@@ -347,16 +383,16 @@ static bool CanResourceHaveRootParameter(const ResourceType resourceType, long b
 }
 
 void D3D12PipelineLayout::BuildRootParameterTables(
-    D3D12RootSignature&             rootSignature,
-    D3D12_DESCRIPTOR_RANGE_TYPE     descRangeType,
-    const PipelineLayoutDescriptor& layoutDesc,
-    const ResourceType              resourceType,
-    long                            bindFlags,
-    UINT&                           outCounter)
+    D3D12RootSignature&                 rootSignature,
+    D3D12_DESCRIPTOR_RANGE_TYPE         descRangeType,
+    const ArrayView<BindingDescriptor>& bindingDescs,
+    const ResourceType                  resourceType,
+    long                                bindFlags,
+    UINT&                               outCounter)
 {
-    for_range(i, layoutDesc.bindings.size())
+    for_range(i, bindingDescs.size())
     {
-        const BindingDescriptor& binding = layoutDesc.bindings[i];
+        const BindingDescriptor& binding = bindingDescs[i];
         if (IsFilteredBinding(binding, resourceType, bindFlags))
         {
             /* If resource binding cannot have its own root parameter, it must be put into a descriptor table */
@@ -366,7 +402,7 @@ void D3D12PipelineLayout::BuildRootParameterTables(
                     /*rootSignature:*/  rootSignature,
                     /*rootParamType:*/  descRangeType,
                     /*layoutDesc:*/     binding,
-                    /*resourceType:*/   static_cast<UINT>(layoutDesc.bindings.size()),
+                    /*resourceType:*/   static_cast<UINT>(bindingDescs.size()),
                     /*bindFlags:*/      descriptorMap_[i]
                 );
 
@@ -393,20 +429,24 @@ void D3D12PipelineLayout::BuildRootParameterTableEntry(
     UINT                            maxNumDescriptorRanges,
     D3D12DescriptorHeapLocation&    outLocation)
 {
+    /* Determine shader visibility for new binding */
+    const D3D12_SHADER_VISIBILITY visibility = D3D12RootParameter::FindSuitableVisibility(bindingDesc.stageFlags);
+
     /* Find compatible root parameter after root parameter for heap resources */
     const UINT rootParamOffset = GetRootParameterIndexAfterHeapResources(rootParameterIndices_);
     if (D3D12RootParameter* rootParam = rootSignature.FindCompatibleRootParameter(descRangeType, rootParamOffset))
     {
         /* Append descriptor range to previous root parameter */
-        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max(1u, bindingDesc.arraySize));
+        rootParam->IncludeShaderVisibility(visibility);
+        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot);
     }
     else
     {
         /* Create new root parameter and append descriptor range */
         UINT rootParamIndex = 0;
         rootParam = rootSignature.AppendRootParameter(&rootParamIndex);
-        rootParam->InitAsDescriptorTable(maxNumDescriptorRanges);
-        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot, std::max(1u, bindingDesc.arraySize));
+        rootParam->InitAsDescriptorTable(maxNumDescriptorRanges, visibility);
+        rootParam->AppendDescriptorTableRange(descRangeType, bindingDesc.slot);
 
         /* Store root parameter index */
         UINT8& rootParamIndexStored = rootParameterIndices_.rootParamDescriptors[GetDescriptorTypeShift(descRangeType)];
@@ -414,20 +454,23 @@ void D3D12PipelineLayout::BuildRootParameterTableEntry(
         rootParamIndexStored = rootParamIndex;
     }
 
+    /* Store target state the binding must be in when it's bound */
+    outLocation.state = GetD3D12BindingResourceState(bindingDesc);
+
     /* Cache binding flags in the same order root parameters are build */
     descriptorLayout_.GetDescriptorLocation(descRangeType, outLocation);
 }
 
 void D3D12PipelineLayout::BuildRootParameters(
-    D3D12RootSignature&             rootSignature,
-    D3D12_ROOT_PARAMETER_TYPE       rootParamType,
-    const PipelineLayoutDescriptor& layoutDesc,
-    const ResourceType              resourceType,
-    long                            bindFlags)
+    D3D12RootSignature&                 rootSignature,
+    D3D12_ROOT_PARAMETER_TYPE           rootParamType,
+    const ArrayView<BindingDescriptor>& bindingDescs,
+    const ResourceType                  resourceType,
+    long                                bindFlags)
 {
-    for_range(i, layoutDesc.bindings.size())
+    for_range(i, bindingDescs.size())
     {
-        const BindingDescriptor& binding = layoutDesc.bindings[i];
+        const BindingDescriptor& binding = bindingDescs[i];
         if (IsFilteredBinding(binding, resourceType, bindFlags))
         {
             /* If resource binding cannot have its own root parameter, it must be put into a descriptor table */
@@ -450,27 +493,31 @@ void D3D12PipelineLayout::BuildRootParameter(
     const BindingDescriptor&        bindingDesc,
     D3D12DescriptorLocation&        outLocation)
 {
+    /* Determine shader visibility for new binding */
+    const D3D12_SHADER_VISIBILITY visibility = D3D12RootParameter::FindSuitableVisibility(bindingDesc.stageFlags);
+
     /* Create new root parameter and append descriptor range */
     UINT rootParamIndex = 0;
     D3D12RootParameter* rootParam = rootSignature.AppendRootParameter(&rootParamIndex);
-    rootParam->InitAsDescriptor(rootParamType, bindingDesc.slot);//, D3D12RootParameter::FindSuitableVisibility(binding.stageFlags));
+    rootParam->InitAsDescriptor(rootParamType, bindingDesc.slot, visibility);
 
     /* Cache binding flags in the same order root parameters are build */
     outLocation.type    = rootParamType;
     outLocation.index   = rootParamIndex;
+    outLocation.state   = GetD3D12BindingResourceState(bindingDesc);
 }
 
 void D3D12PipelineLayout::BuildStaticSamplers(
-    D3D12RootSignature&             rootSignature,
-    const PipelineLayoutDescriptor& layoutDesc,
-    UINT&                           numStaticSamplers)
+    D3D12RootSignature&                         rootSignature,
+    const ArrayView<StaticSamplerDescriptor>&   staticSamplerDescs,
+    UINT&                                       outCounter)
 {
-    for (const StaticSamplerDescriptor& staticSamplerDesc : layoutDesc.staticSamplers)
+    for (const StaticSamplerDescriptor& staticSamplerDesc : staticSamplerDescs)
     {
         D3D12_STATIC_SAMPLER_DESC* nativeStaticSampler = rootSignature.AppendStaticSampler();
         D3D12Sampler::ConvertDesc(*nativeStaticSampler, staticSamplerDesc);
     }
-    numStaticSamplers = static_cast<UINT>(layoutDesc.staticSamplers.size());
+    outCounter = static_cast<UINT>(staticSamplerDescs.size());
 }
 
 

@@ -31,26 +31,16 @@ class MTSwapChain final : public SwapChain
 
     public:
 
-        /* ----- Common ----- */
+        #include <LLGL/Backend/SwapChain.inl>
+
+    public:
 
         MTSwapChain(
             id<MTLDevice>                   device,
             const SwapChainDescriptor&      desc,
-            const std::shared_ptr<Surface>& surface
+            const std::shared_ptr<Surface>& surface,
+            const RendererInfo&             rendererInfo
         );
-
-        void Present() override;
-
-        std::uint32_t GetCurrentSwapIndex() const override;
-        std::uint32_t GetNumSwapBuffers() const override;
-        std::uint32_t GetSamples() const override;
-
-        Format GetColorFormat() const override;
-        Format GetDepthStencilFormat() const override;
-
-        const RenderPass* GetRenderPass() const override;
-
-        bool SetVsyncInterval(std::uint32_t vsyncInterval) override;
 
     public:
 

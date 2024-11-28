@@ -14,6 +14,7 @@
 #include <LLGL/TextureFlags.h>
 #include <LLGL/CommandBufferFlags.h>
 #include "../OpenGL.h"
+#include "../../../Core/Assertion.h"
 #include <array>
 #include <stack>
 #include <cstdint>
@@ -29,6 +30,7 @@ class GLContext;
 class GLRenderTarget;
 class GLSwapChain;
 class GLBuffer;
+class GLBufferWithXFB;
 class GLTexture;
 class GLDepthStencilState;
 class GLRasterizerState;
@@ -36,9 +38,7 @@ class GLBlendState;
 class GLRenderPass;
 class GLProgramPipeline;
 class GLShaderProgram;
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-class GL2XSampler;
-#endif
+class GLEmulatedSampler;
 
 // OpenGL state machine manager that keeps track of certain GL states.
 class GLStateManager
@@ -68,10 +68,12 @@ class GLStateManager
         /* ----- Common ----- */
 
         GLStateManager();
+        ~GLStateManager();
 
         // Returns the active GL state manager.
         static inline GLStateManager& Get()
         {
+            LLGL_DEBUG_ASSERT_PTR(current_);
             return *current_;
         }
 
@@ -251,10 +253,8 @@ class GLStateManager
 
         void NotifySamplerRelease(GLuint sampler);
 
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        void BindGL2XSampler(GLuint layer, const GL2XSampler& sampler);
-        void BindCombinedGL2XSampler(GLuint layer, const GL2XSampler& sampler, GLTexture& texture);
-        #endif
+        void BindEmulatedSampler(GLuint layer, const GLEmulatedSampler& sampler);
+        void BindCombinedEmulatedSampler(GLuint layer, const GLEmulatedSampler& sampler, GLTexture& texture);
 
         /* ----- Shader program ----- */
 
@@ -288,6 +288,12 @@ class GLStateManager
         void Clear(long flags);
         void ClearBuffers(std::uint32_t numAttachments, const AttachmentClear* attachments);
 
+        /* ----- Transform feedback ----- */
+
+        void BindTransformFeedback(GLuint transformFeedback);
+
+        void NotifyTransformFeedbackRelease(GLBufferWithXFB* bufferWithXfb);
+
         /* ----- Feedback ----- */
 
         // Returns the limitations for this GL context.
@@ -312,7 +318,7 @@ class GLStateManager
 
     private:
 
-        struct GLIntermediateBufferWriteMasks;
+        struct GLFramebufferClearState;
 
     private:
 
@@ -337,22 +343,20 @@ class GLStateManager
 
         /* ----- Stacks ----- */
 
-        void PrepareColorMaskForClear(GLIntermediateBufferWriteMasks& intermediateMasks);
-        void PrepareDepthMaskForClear(GLIntermediateBufferWriteMasks& intermediateMasks);
-        void PrepareStencilMaskForClear(GLIntermediateBufferWriteMasks& intermediateMasks);
-        void RestoreWriteMasks(GLIntermediateBufferWriteMasks& intermediateMasks);
+        void PrepareRasterizerStateForClear(GLFramebufferClearState& clearState);
+        void PrepareColorMaskForClear(GLFramebufferClearState& clearState);
+        void PrepareDepthMaskForClear(GLFramebufferClearState& clearState);
+        void PrepareStencilMaskForClear(GLFramebufferClearState& clearState);
+        void RestoreClearState(const GLFramebufferClearState& clearState);
 
         /* ----- Render pass ----- */
 
-        // Blits the currently bound render target
-        void ResolveMultisampledRenderTarget();
-
         std::uint32_t ClearColorBuffers(
-            const std::uint8_t*             colorBuffers,
-            std::uint32_t                   numClearValues,
-            const ClearValue*               clearValues,
-            const ClearValue&               defaultClearValue,
-            GLIntermediateBufferWriteMasks& intermediateMasks
+            const std::uint8_t*         colorBuffers,
+            std::uint32_t               numClearValues,
+            const ClearValue*           clearValues,
+            const ClearValue&           defaultClearValue,
+            GLFramebufferClearState&    clearState
         );
 
     private:
@@ -403,10 +407,8 @@ class GLStateManager
 
         GLContextState                      contextState_;
 
-        #ifdef LLGL_GL_ENABLE_OPENGL2X
-        GLTexture*                          boundGLTextures_[GLContextState::numTextureLayers]      = {};
-        const GL2XSampler*                  boundGL2XSamplers_[GLContextState::numTextureLayers]    = {};
-        #endif
+        GLTexture*                          boundGLTextures_[GLContextState::numTextureLayers]          = {};
+        const GLEmulatedSampler*            boundGLEmulatedSamplers_[GLContextState::numTextureLayers]  = {};
 
         GLRenderTarget*                     boundRenderTarget_          = nullptr;
 

@@ -12,11 +12,13 @@
 #include "../Buffer/D3D12Buffer.h"
 #include "../Texture/D3D12Sampler.h"
 #include "../Texture/D3D12Texture.h"
+#include "../Command/D3D12CommandContext.h"
 #include "../../DXCommon/DXCore.h"
 #include "../../ResourceUtils.h"
 #include "../../TextureUtils.h"
 #include "../../BufferUtils.h"
 #include "../../CheckedCast.h"
+#include "../../../Core/Exception.h"
 #include "../../../Core/Assertion.h"
 #include <LLGL/Resource.h>
 #include <LLGL/ResourceHeapFlags.h>
@@ -37,16 +39,16 @@ D3D12ResourceHeap::D3D12ResourceHeap(
     /* Get pipeline layout object */
     auto pipelineLayoutD3D = LLGL_CAST(const D3D12PipelineLayout*, desc.pipelineLayout);
     if (!pipelineLayoutD3D)
-        throw std::invalid_argument("failed to create resource heap due to missing pipeline layout");
+        LLGL_TRAP("failed to create resource heap due to missing pipeline layout");
 
     /* Get and validate number of bindings and resource views */
-    const auto numBindings      = pipelineLayoutD3D->GetNumHeapBindings();
-    const auto numResourceViews = GetNumResourceViewsOrThrow(numBindings, desc, initialResourceViews);
+    const std::uint32_t numBindings         = pipelineLayoutD3D->GetNumHeapBindings();
+    const std::uint32_t numResourceViews    = GetNumResourceViewsOrThrow(numBindings, desc, initialResourceViews);
 
     numDescriptorSets_ = numResourceViews / numBindings;
 
     /* Store meta data which pipelines will be used by this resource heap */
-    auto convolutedStageFlags = pipelineLayoutD3D->GetConvolutedStageFlags();
+    long convolutedStageFlags = pipelineLayoutD3D->GetConvolutedStageFlags();
 
     /* Store descriptor handle strides per descriptor set */
     const auto& descHeapLayout  = pipelineLayoutD3D->GetDescriptorHeapLayout();
@@ -55,6 +57,7 @@ D3D12ResourceHeap::D3D12ResourceHeap(
 
     /* Keep copy of root parameter map */
     descriptorMap_ = pipelineLayoutD3D->GetDescriptorHeapMap();
+    resources_.resize(numDescriptorSets_ * numDescriptorsPerSet_[0], nullptr);
 
     /* Create descriptor heaps */
     if (numDescriptorsPerSet_[0] > 0)
@@ -83,6 +86,30 @@ D3D12ResourceHeap::D3D12ResourceHeap(
         SetDebugName(desc.debugName);
 }
 
+static D3D12Resource* GetD3DResourceRef(Resource& resource)
+{
+    switch (resource.GetResourceType())
+    {
+        case ResourceType::Buffer:
+        {
+            auto& bufferD3D = LLGL_CAST(D3D12Buffer&, resource);
+            return &(bufferD3D.GetResource());
+        }
+        break;
+
+        case ResourceType::Texture:
+        {
+            auto& textureD3D = LLGL_CAST(D3D12Texture&, resource);
+            return &(textureD3D.GetResource());
+        }
+        break;
+
+        default:
+        break;
+    }
+    return nullptr;
+}
+
 std::uint32_t D3D12ResourceHeap::CreateResourceViewHandles(
     ID3D12Device*                               device,
     std::uint32_t                               firstDescriptor,
@@ -92,8 +119,8 @@ std::uint32_t D3D12ResourceHeap::CreateResourceViewHandles(
     if (resourceViews.empty())
         return 0;
 
-    const auto numBindings      = static_cast<std::uint32_t>(descriptorMap_.size());
-    const auto numDescriptors   = numDescriptorSets_ * numBindings;
+    const std::uint32_t numBindings     = static_cast<std::uint32_t>(descriptorMap_.size());
+    const std::uint32_t numDescriptors  = numDescriptorSets_ * numBindings;
 
     /* Silently quit on out of bounds; debug layer must report these errors */
     if (firstDescriptor >= numDescriptors)
@@ -114,19 +141,27 @@ std::uint32_t D3D12ResourceHeap::CreateResourceViewHandles(
     std::uint32_t numWritten = 0;
     std::uint32_t uavChangeSetRange[2] = { UINT32_MAX, 0 };
 
-    for (const auto& desc : resourceViews)
+    for (const ResourceViewDescriptor& desc : resourceViews)
     {
         /* Skip over empty resource descriptors */
         if (desc.resource == nullptr)
             continue;
 
         /* Get CPU descriptor handle address for current root parameter */
-        const auto  descriptorSet       = firstDescriptor / numBindings;
-        const auto& descriptorLocation  = descriptorMap_[firstDescriptor % numBindings];
-        const auto  handleOffset        = descriptorHandleStrides_[descriptorLocation.heap] * descriptorLocation.index;
-        const auto  setOffset           = descriptorSetStrides_[descriptorLocation.heap] * (firstDescriptor / numBindings);
+        const std::uint32_t                 descriptorSet       = firstDescriptor / numBindings;
+        const D3D12DescriptorHeapLocation&  descriptorLocation  = descriptorMap_[firstDescriptor % numBindings];
+        const UINT                          handleOffset        = descriptorHandleStrides_[descriptorLocation.heap] * descriptorLocation.index;
+        const UINT                          setOffset           = descriptorSetStrides_[descriptorLocation.heap] * (firstDescriptor / numBindings);
 
         cpuDescHandle.ptr = cpuDescHandles[descriptorLocation.heap].ptr + handleOffset + setOffset;
+
+        /* Store reference to resource state */
+        if (descriptorLocation.heap == 0)
+        {
+            const UINT descriptorHeap0Index = descriptorSet * numDescriptorsPerSet_[0] + descriptorLocation.index;
+            LLGL_ASSERT(descriptorHeap0Index < resources_.size());
+            resources_[descriptorHeap0Index] = GetD3DResourceRef(*(desc.resource));
+        }
 
         /* Write current resource view to descriptor heap */
         switch (descriptorLocation.type)
@@ -172,9 +207,21 @@ std::uint32_t D3D12ResourceHeap::CreateResourceViewHandles(
     return numWritten;
 }
 
-void D3D12ResourceHeap::InsertResourceBarriers(ID3D12GraphicsCommandList* commandList, std::uint32_t descriptorSet)
+void D3D12ResourceHeap::TransitionResources(D3D12CommandContext& context, std::uint32_t descriptorSet)
 {
-    if (descriptorSet < numDescriptorSets_ && HasBarriers())
+    /* Transition all D3D resources in the specified descriptor set; Only heap 0 for CBV/SRV/UAV */
+    for_range(i, numDescriptorsPerSet_[0])
+    {
+        const UINT descriptorHeap0Index = descriptorSet * numDescriptorsPerSet_[0] + i;
+        LLGL_ASSERT(descriptorHeap0Index < resources_.size());
+        if (D3D12Resource* resource = resources_[descriptorHeap0Index])
+            context.TransitionResource(*resource, descriptorMap_[i].state);
+    }
+}
+
+void D3D12ResourceHeap::InsertUAVBarriers(ID3D12GraphicsCommandList* commandList, std::uint32_t descriptorSet)
+{
+    if (descriptorSet < numDescriptorSets_ && HasUAVBarriers())
     {
         const auto barrierHeapStart = &barriers_[descriptorSet * barrierStride_];
         const auto numBarriers = *reinterpret_cast<const UINT*>(barrierHeapStart);
@@ -224,11 +271,6 @@ std::uint32_t D3D12ResourceHeap::GetNumDescriptorSets() const
 /*
  * ======= Private: =======
  */
-
-static void ErrNullPointerInResource()
-{
-    throw std::invalid_argument("cannot create resource heap with null pointer in resource view");
-}
 
 void D3D12ResourceHeap::CreateDescriptorHeap(
     ID3D12Device*                   device,
@@ -368,7 +410,7 @@ void D3D12ResourceHeap::ExchangeUAVResource(
     Resource&                           resource,
     std::uint32_t                       (&setRange)[2])
 {
-    if (HasBarriers())
+    if (HasUAVBarriers())
     {
         if (resource.GetResourceType() == ResourceType::Buffer)
         {
@@ -415,8 +457,11 @@ void D3D12ResourceHeap::EmplaceD3DUAVResource(
 
 void D3D12ResourceHeap::UpdateBarriers(std::uint32_t descriptorSet)
 {
-    auto barrierHeapStart = &barriers_[descriptorSet * barrierStride_];
-    auto barriers = reinterpret_cast<D3D12_RESOURCE_BARRIER*>(barrierHeapStart + sizeof(UINT));
+    if (!HasUAVBarriers())
+        return;
+
+    char* barrierHeapStart = &barriers_[descriptorSet * barrierStride_];
+    auto* barriers = reinterpret_cast<D3D12_RESOURCE_BARRIER*>(barrierHeapStart + sizeof(UINT));
 
     /* Write new barriers for entire descriptor set */
     UINT numBarriers = 0;

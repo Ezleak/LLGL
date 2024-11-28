@@ -14,7 +14,8 @@
 #include <LLGL/PipelineLayoutFlags.h>
 #include <LLGL/Types.h>
 #include "../RenderState/GLState.h"
-#include "../GLProfile.h"
+#include "../Buffer/GLSharedContextVertexArray.h"
+#include "../Profile/GLProfile.h"
 #include <cstdint>
 
 
@@ -24,6 +25,7 @@ namespace LLGL
 
 class RenderTarget;
 class GLBuffer;
+class GLBufferWithXFB;
 class GLTexture;
 class GLResourceHeap;
 class GLPipelineState;
@@ -32,10 +34,7 @@ class GLSwapChain;
 class GLRenderTarget;
 class GLRenderPass;
 class GLDeferredCommandBuffer;
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-class GL2XVertexArray;
-class GL2XSampler;
-#endif
+class GLEmulatedSampler;
 
 
 struct GLCmdBufferSubData
@@ -179,17 +178,15 @@ struct GLCmdClearBuffers
 //  AttachmentClear attachments[numAttachments];
 };
 
-struct GLCmdBindVertexArray
+struct GLCmdResolveRenderTarget
 {
-    GLuint vao;
+    GLRenderTarget* renderTarget;
 };
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-struct GLCmdBindGL2XVertexArray
+struct GLCmdBindVertexArray
 {
-    const GL2XVertexArray* vertexArrayGL2X;
+    GLSharedContextVertexArray* vertexArray;
 };
-#endif
 
 struct GLCmdBindElementArrayBufferToVAO
 {
@@ -210,6 +207,12 @@ struct GLCmdBindBuffersBase
     GLuint          first;
     GLsizei         count;
 //  GLuint          buffer[count];
+};
+
+struct GLCmdBeginBufferXfb
+{
+    GLBufferWithXFB*    bufferWithXfb;
+    GLenum              primitiveMode;
 };
 
 struct GLCmdBeginTransformFeedback
@@ -253,7 +256,7 @@ struct GLCmdSetStencilRef
     GLenum  face;
 };
 
-struct GLCmdSetUniforms
+struct GLCmdSetUniform
 {
     GLuint      program;
     UniformType type;
@@ -391,6 +394,18 @@ struct GLCmdMultiDrawElementsIndirect
     GLsizei         stride;
 };
 
+struct GLCmdDrawTransformFeedback
+{
+    GLenum  mode;
+    GLuint  xfbID;
+};
+
+struct GLCmdDrawEmulatedTransformFeedback
+{
+    GLenum              mode;
+    GLBufferWithXFB*    bufferWithXfb;
+};
+
 struct GLCmdDispatchCompute
 {
     GLuint numgroups[3];
@@ -422,13 +437,11 @@ struct GLCmdBindSampler
     GLuint sampler;
 };
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-struct GLCmdBindGL2XSampler
+struct GLCmdBindEmulatedSampler
 {
-    GLuint              layer;
-    const GL2XSampler*  samplerGL2X;
+    GLuint                      layer;
+    const GLEmulatedSampler*    sampler;
 };
-#endif
 
 struct GLCmdMemoryBarrier
 {

@@ -83,14 +83,24 @@ class C99Translator(Translator):
             self.statement('/* ----- Constants ----- */')
             self.statement()
 
+            def translateConstFieldToMacroIdent(struct, fieldName):
+                return f'LLGL_{struct.name.upper()}_{fieldName.upper()}'
+
+            def translateConstInit(struct, init):
+                structBaseIdent = struct.name + '::'
+                if init.startswith(structBaseIdent):
+                    return translateConstFieldToMacroIdent(struct, init[len(structBaseIdent):])
+                else:
+                    return init
+
             for struct in constStructs:
                 # Write struct field declarations
                 declList = Translator.DeclarationList()
                 for field in struct.fields:
-                    declList.append(Translator.Declaration('', f'LLGL_{struct.name.upper()}_{field.name.upper()}', field.init))
+                    declList.append(Translator.Declaration('', translateConstFieldToMacroIdent(struct, field.name), field.init))
 
                 for decl in declList.decls:
-                    self.statement(f'#define {decl.name}{declList.spaces(1, decl.name)} ( {decl.init} )')
+                    self.statement(f'#define {decl.name}{declList.spaces(1, decl.name)} ( {translateConstInit(struct, decl.init)} )')
                 self.statement()
 
             self.statement()
@@ -150,7 +160,7 @@ class C99Translator(Translator):
             self.statement()
 
             for flag in doc.flags:
-                self.statement('typedef enum LLGL{}'.format(flag.name))
+                self.statement(f'typedef enum LLGL{flag.name}')
                 basename = flag.name[:-len('Flags')]
                 self.openScope()
 
@@ -193,8 +203,8 @@ class C99Translator(Translator):
                 else:
                     if fieldType.isConst:
                         typeStr += 'const '
-                    if fieldType.baseType == StdType.STRUCT and not fieldType.externalCond:
-                        typeStr += 'LLGL'
+                    if fieldType.baseType == StdType.STRUCT:
+                        typeStr += 'struct ' if fieldType.externalCond else 'LLGL'
                     typeStr += fieldType.typename
                     if fieldType.isPointer:
                         typeStr += '*'
@@ -230,7 +240,7 @@ class C99Translator(Translator):
             self.statement()
 
             for struct in commonStructs:
-                self.statement('typedef struct LLGL{}'.format(struct.name))
+                self.statement(f'typedef struct LLGL{struct.name}')
                 self.openScope()
 
                 # Write struct field declarations

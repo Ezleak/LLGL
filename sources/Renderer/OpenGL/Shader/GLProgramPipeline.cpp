@@ -12,6 +12,7 @@
 #include "../Ext/GLExtensionRegistry.h"
 #include "../RenderState/GLStateManager.h"
 #include "../../../Core/Assertion.h"
+#include "../../../Core/Exception.h"
 #include <LLGL/Report.h>
 #include <LLGL/Utils/ForRange.h>
 
@@ -20,16 +21,18 @@ namespace LLGL
 {
 
 
+#if LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
+
 static GLuint GLCreateProgramPipeline()
 {
     GLuint id = 0;
-    #if defined GL_ARB_direct_state_access && defined LLGL_GL_ENABLE_DSA_EXT
+    #if LLGL_GLEXT_DIRECT_STATE_ACCESS
     if (HasExtension(GLExt::ARB_direct_state_access))
     {
         glCreateProgramPipelines(1, &id);
     }
     else
-    #endif
+    #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Generate new program pipeline and initialize to its default state via glBindProgramPipeline */
         glGenProgramPipelines(1, &id);
@@ -131,6 +134,35 @@ void GLProgramPipeline::UseProgramStages(
 
     BuildSignature(numShaders, reinterpret_cast<const Shader* const*>(shaders), permutation);
 }
+
+#else // LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
+
+GLProgramPipeline::GLProgramPipeline(
+    std::size_t             numShaders,
+    Shader* const*          shaders,
+    GLShader::Permutation   permutation)
+:
+    GLShaderPipeline { 0 }
+{
+    LLGL_TRAP_FEATURE_NOT_SUPPORTED("GL_ARB_separate_shader_objects");
+}
+
+void GLProgramPipeline::Bind(GLStateManager& stateMngr)
+{
+    // dummy
+}
+
+void GLProgramPipeline::BindResourceSlots(const GLShaderBindingLayout& bindingLayout)
+{
+    // dummy
+}
+
+void GLProgramPipeline::QueryInfoLogs(Report& report)
+{
+    // dummy
+}
+
+#endif // /LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
 
 
 } // /namespace LLGL

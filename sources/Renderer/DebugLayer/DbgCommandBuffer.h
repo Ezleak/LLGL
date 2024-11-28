@@ -82,6 +82,7 @@ class DbgCommandBuffer final : public CommandBuffer
             DbgSwapChain*       swapChain                                           = nullptr;
             DbgRenderTarget*    renderTarget                                        = nullptr;
             std::uint32_t       numViewports                                        = 0;
+            bool                anyFragmentOutput                                   = false;
 
             // Stream inputs/outputs
             DbgBuffer*          vertexBufferStore[1]                                = {};
@@ -143,6 +144,7 @@ class DbgCommandBuffer final : public CommandBuffer
 
         void ValidateDrawCmd(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance);
         void ValidateDrawIndexedCmd(std::uint32_t numVertices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance);
+        void ValidateDrawStreamOutputCmd();
 
         void ValidateVertexLimit(std::uint32_t vertexCount, std::uint32_t vertexLimit);
         void ValidateThreadGroupLimit(std::uint32_t size, std::uint32_t limit);
@@ -162,6 +164,7 @@ class DbgCommandBuffer final : public CommandBuffer
 
         bool ValidateQueryIndex(DbgQueryHeap& queryHeapDbg, std::uint32_t query);
         DbgQueryHeap::State* GetAndValidateQueryState(DbgQueryHeap& queryHeapDbg, std::uint32_t query);
+        void ValidateQueryContext(DbgQueryHeap& queryHeapDbg, std::uint32_t query);
         void ValidateRenderCondition(DbgQueryHeap& queryHeapDbg, std::uint32_t query);
 
         void ValidateRenderTargetRange(DbgRenderTarget& renderTargetDbg, const Offset2D& offset, const Extent2D& extent);
@@ -176,6 +179,7 @@ class DbgCommandBuffer final : public CommandBuffer
 
         void ValidateDynamicStates();
         void ValidateBindingTable();
+        void ValidateBlendStates();
 
         DbgPipelineState* AssertAndGetGraphicsPSO();
         DbgPipelineState* AssertAndGetComputePSO();
@@ -192,6 +196,7 @@ class DbgCommandBuffer final : public CommandBuffer
         void AssertInstancingSupported();
         void AssertOffsetInstancingSupported();
         void AssertIndirectDrawingSupported();
+        void AssertStreamOutputSupported();
 
         void AssertNullPointer(const void* ptr, const char* name);
 

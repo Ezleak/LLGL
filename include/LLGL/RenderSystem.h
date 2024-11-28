@@ -142,9 +142,9 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Loads a new render system from the specified module.
-        \param[in] renderSystemDesc Specifies the render system descriptor structure. The 'moduleName' member of this strucutre must not be empty.
+        \param[in] renderSystemDesc Specifies the render system descriptor structure. The 'moduleName' member of this structure must not be empty.
         \param[out] report Optional pointer to a report on potential failure of loading the specified module.
-        \remarks If loading the specified moduel failed, the return value is null and the reason for failure is reported in \c report if it's a valid pointer.
+        \remarks If loading the specified module failed, the return value is null and the reason for failure is reported in \c report if it's a valid pointer.
         \remarks The descriptor structure can be initialized by only the module name like shown in the following example:
         \code
         // Load the "OpenGL" render system module
@@ -166,7 +166,6 @@ class LLGL_EXPORT RenderSystem : public Interface
         }
         LLGL::RenderSystemPtr myRenderSystem = LLGL::RenderSystem::Load(myRendererDesc);
         \endcode
-        \throws std::runtime_error If loading the render system from the specified module failed.
         \see RenderSystemDescriptor::moduleName
         */
         static RenderSystemPtr Load(const RenderSystemDescriptor& renderSystemDesc, Report* report = nullptr);
@@ -192,17 +191,17 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Returns basic renderer information.
-        \remarks The validity of these information is only guaranteed if this function is called
-        after a valid swap-chain has been created. Otherwise the behavior is undefined!
+        \remarks This is not a constant member function because the first call will invoke the query,
+        while subsequent calls with return the cached information.
         */
-        const RendererInfo& GetRendererInfo() const;
+        const RendererInfo& GetRendererInfo();
 
         /**
         \brief Returns the rendering capabilities.
-        \remarks The validity of these information is only guaranteed if this function is called
-        after a valid swap-chain has been created. Otherwise the behavior is undefined!
+        \remarks This is not a constant member function because the first call will invoke the query,
+        while subsequent calls with return the cached information.
         */
-        const RenderingCapabilities& GetRenderingCaps() const;
+        const RenderingCapabilities& GetRenderingCaps();
 
         /**
         \brief Returns a pointer to the report or null if there is none.
@@ -267,11 +266,14 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Creates a new buffer array.
+
         \param[in] numBuffers Specifies the number of buffers in the array. This must be greater than 0.
         \param[in] bufferArray Pointer to an array of Buffer object pointers. This must not be null.
+
         \remarks All buffers within this array must have the same binding flags.
         The buffers inside this array must persist as long as this buffer array is used,
         and the individual buffers are still required to read and write its data from and to the GPU.
+
         \throws std::invalid_argument If \c numBuffers is 0.
         \throws std::invalid_argument If \c bufferArray is null.
         \throws std::invalid_argument If any of the pointers in the array are null.
@@ -288,13 +290,19 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Updates the data of the specified buffer.
+
         \param[in] buffer Specifies the destination buffer whose data is to be updated.
         \param[in] offset Specifies the offset (in bytes) at which the buffer is to be updated.
         This offset plus the data block size (i.e. <code>offset + dataSize</code>) must be less than or equal to the size of the buffer.
         \param[in] data Raw pointer to the data with which the buffer is to be updated. This must not be null!
         \param[in] dataSize Specifies the size (in bytes) of the data block which is to be updated.
         This must be less then or equal to the size of the buffer.
-        \remarks To update a small buffer (maximum of 65536 bytes) during encoding a command buffer, use CommandBuffer::UpdateBuffer.
+
+        \remarks This function, just like any other write operation from the RenderSystem, <b>should not</b> be interleaved with command buffer recording
+        in which these resources are used, unless they are carefully organized to not override their content during such command recordings.
+        This is because even an immediate context does not guarantee that any command is submitted to the GPU until the end of recording (i.e. CommandBuffer::End).
+        To update a small buffer (maximum of 65536 bytes) during command recording, use CommandBuffer::UpdateBuffer.
+
         \see ReadBuffer
         */
         virtual void WriteBuffer(Buffer& buffer, std::uint64_t offset, const void* data, std::uint64_t dataSize) = 0;
@@ -336,7 +344,7 @@ class LLGL_EXPORT RenderSystem : public Interface
         /**
         \brief Unmaps the specified buffer.
         \remarks This must be called on a buffer that was previously mapped into CPU memory space.
-        The following example illustrates how to map and unmap a buffer from GPU into CPU memory sapce:
+        The following example illustrates how to map and unmap a buffer from GPU into CPU memory space:
         \code
         if (void* data = myRenderer->MapBuffer(*myBuffer, LLGL::CPUAccess::Write))
         {
@@ -366,10 +374,18 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Updates the image data of the specified texture.
+
         \param[in] texture Specifies the texture whose data is to be updated.
         \param[in] textureRegion Specifies the region where the texture is to be updated. The field TextureRegion::numMipLevels \b must be 1.
         \param[in] srcImageView Specifies the source image view. Its \c data member must not be null!
-        \remarks This function can only be used for non-multi-sample textures, i.e. from types other than TextureType::Texture2DMS and TextureType::Texture2DMSArray.
+
+        \remarks This function \b cannot be used with multi-sample textures, i.e. textures of type TextureType::Texture2DMS or TextureType::Texture2DMSArray.
+
+        \remarks This function, just like any other write operation from the RenderSystem, <b>should not</b> be interleaved with command buffer recording
+        in which these resources are used, unless they are carefully organized to not override their content during such command recordings.
+        This is because even an immediate context does not guarantee that any command is submitted to the GPU until the end of recording (i.e. CommandBuffer::End).
+        If texture data needs to be updated from the CPU during command recording, update a buffer via CommandBuffer::UpdateBuffer
+        and then copy that buffer region into the texture via CommandBuffer::CopyTextureFromBuffer.
         */
         virtual void WriteTexture(Texture& texture, const TextureRegion& textureRegion, const ImageView& srcImageView) = 0;
 
@@ -378,6 +394,7 @@ class LLGL_EXPORT RenderSystem : public Interface
         \param[in] texture Specifies the texture object to read from.
         \param[in] textureRegion Specifies the region where the texture data is to be read.
         \param[out] dstImageView Specifies the destination image view to write the texture data to.
+
         \remarks The required size for a successful texture read operation depends on the image format, data type, and texture size.
         The Texture::GetDesc or Texture::GetMipExtent functions can be used to determine the texture dimensions.
         \code
@@ -398,9 +415,11 @@ class LLGL_EXPORT RenderSystem : public Interface
         // Read texture data from first MIP-map level (index 0)
         myRenderSystem->ReadTexture(*myTexture, 0, myImageView);
         \endcode
+
         \note The behavior is undefined if <code>dstImageView.data</code> points to an invalid buffer,
         or <code>dstImageView.data</code> points to a buffer that is smaller than specified by <code>dstImageView.dataSize</code>,
         or <code>dstImageView.dataSize</code> is less than the required size.
+
         \throws std::invalid_argument If <code>dstImageView.data</code> is null.
         \see Texture::GetDesc
         \see Texture::GetMipExtent
@@ -411,7 +430,7 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Creates a new Sampler object.
-        \throws std::runtime_error If the renderer does not support Sampler objects (e.g. if OpenGL 3.1 or lower is used).
+        \remarks Samplers (aka. sampler states) define how to sample texture resources in shaders.
         \see GetRenderingCaps
         */
         virtual Sampler* CreateSampler(const SamplerDescriptor& samplerDesc) = 0;
@@ -423,14 +442,17 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Creates a new resource heap.
+
         \param[in] resourceHeapDesc Specifies the descriptor for the resource heap.
         If the \c numResourceViews field is zero, the \c initialResourceViews parameter will determine the number of resources,
-        it must \e not be empty and it \b must be a multiple of the number of bindings in the piepline layout.
+        it must \e not be empty and it \b must be a multiple of the number of bindings in the pipeline layout.
         \param[in] initialResourceViews Specifies an optional array of initial resource views.
-        If this is non-null, the array pointed to must have enough elements to initialze the entire resource heap.
+        If this is non-null, the array pointed to must have enough elements to initialize the entire resource heap.
         Uninitialized resource views must be written with a call to WriteResourceHeap before the resource heap can be used in a command buffer.
+
         \remarks Resource heaps are used in combination with a pipeline layout.
         The pipeline layout determines to which binding points the resources are bound.
+
         \see CreatePipelineLayout
         \see CommandBuffer::SetResourceHeap
         \see WriteResourceHeap
@@ -443,15 +465,24 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Writes new resource view descriptors into the specified resource heap.
+
         \param[in] resourceHeap Specifies the resource heap that is to be updated.
         \param[in] firstDescriptor Zero-based index to the first descriptor that is to be updated.
         This must be less than the number of bindings in the resource heap's pipeline layout (PipelineLayout::GetNumHeapBindings)
         multiplied by the number of descriptor sets in the resource heap (ResourceHeap::GetNumDescriptorSets).
         \param[in] resourceViews Array of resource view descriptors.
         \remarks The type of a resource view, i.e. whether it's a buffer, texture, or sampler, must not be changed with this function.
+
+        \remarks This function, just like any other write operation from the RenderSystem, <b>should not</b> be interleaved with command buffer recording
+        in which these resources are used, unless they are carefully organized to not override their content during such command recordings.
+        This is because even an immediate context does not guarantee that any command is submitted to the GPU until the end of recording (i.e. CommandBuffer::End).
+        To swap out resources during command recording, use CommandBuffer::SetResource with individual bindings or write descriptors to unique sets within the heap.
+
         \return Number of resource views that have been updated by this call. Any resource view descriptor with a \c resource field that is null will be ignored silently.
+
         \see ResourceHeap::GetNumDescriptorSets
         \see PipelineLayout::GetNumHeapBindings
+        \see CommandBUffer::SetResourceHeap
         */
         virtual std::uint32_t WriteResourceHeap(ResourceHeap& resourceHeap, std::uint32_t firstDescriptor, const ArrayView<ResourceViewDescriptor>& resourceViews) = 0;
 
@@ -475,7 +506,7 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Creates a new RenderTarget object.
-        \throws std::runtime_error If the renderer does not support RenderTarget objects (e.g. if OpenGL 2.1 or lower is used).
+        \remarks Use render targets to render into a texture instead of a swap-chain (i.e. the screen).
         */
         virtual RenderTarget* CreateRenderTarget(const RenderTargetDescriptor& renderTargetDesc) = 0;
 
@@ -529,7 +560,7 @@ class LLGL_EXPORT RenderSystem : public Interface
 
         /**
         \brief Releases the specified PipelineCache object. After this call, the specified object must no longer be used.
-        \remarks Backends that do not support pipeline caching might be using only a single pipeline cache object with a refernece counter,
+        \remarks Backends that do not support pipeline caching might be using only a single pipeline cache object with a reference counter,
         in which case releaseing such object will only decrement its internal counter and only delete the object until this counter reaches zero.
         */
         virtual void Release(PipelineCache& pipelineCache)  = 0;
@@ -641,11 +672,24 @@ class LLGL_EXPORT RenderSystem : public Interface
         */
         void Errorf(const char* format, ...);
 
-        //! Sets the renderer information.
+        //! \deprecated Since 0.04b; Implement QueryRendererDetails() instead!
+        LLGL_DEPRECATED("RenderSystem::SetRendererInfo is deprecated since 0.04b; Implement QueryRendererDetails() instead!")
         void SetRendererInfo(const RendererInfo& info);
 
-        //! Sets the rendering capabilities.
+        //! \deprecated Since 0.04b; Implement QueryRendererDetails() instead!
+        LLGL_DEPRECATED("RenderSystem::SetRendererInfo is deprecated since 0.04b; Implement QueryRendererDetails() instead!")
         void SetRenderingCaps(const RenderingCapabilities& caps);
+
+    protected:
+
+        /**
+        \brief Queries the renderer information and capabilities.
+        \param[out] outInfo Specifies the output parameter for the renderer info. This may be null.
+        \param[out] outCaps Specifies the output parameter for the renderer capabilities. This may be null.
+        \remarks This function may be called separately for both the information and capabilities query.
+        \return True on success. Otherwise, the backend is not ready yet to provide the requested details.
+        */
+        virtual bool QueryRendererDetails(RendererInfo* outInfo, RenderingCapabilities* outCaps) = 0;
 
     protected:
 

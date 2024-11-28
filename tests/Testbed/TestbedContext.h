@@ -100,6 +100,8 @@ class TestbedContext
         enum VertFmt
         {
             VertFmtStd = 0,
+            VertFmtColored,
+            VertFmtColoredSO,
             VertFmtUnprojected,
             VertFmtEmpty,
 
@@ -118,22 +120,40 @@ class TestbedContext
         {
             VSSolid = 0,
             PSSolid,
+
             VSTextured,
             PSTextured,
+
             VSDynamic,
             PSDynamic,
+
             VSUnprojected,
             PSUnprojected,
+
             VSDualSourceBlend,
             PSDualSourceBlend,
+
             VSShadowMap,
             VSShadowedScene,
             PSShadowedScene,
+
+            VSResourceArrays,
+            PSResourceArrays,
+
             VSResourceBinding,
             PSResourceBinding,
             CSResourceBinding,
+
             VSClear,
             PSClear,
+
+            VSStreamOutput,
+            VSStreamOutputXfb,
+            HSStreamOutput,
+            DSStreamOutput,
+            DSStreamOutputXfb,
+            GSStreamOutputXfb,
+            PSStreamOutput,
 
             ShaderCount,
         };
@@ -144,6 +164,7 @@ class TestbedContext
             TextureGradient,
             TexturePaintingA_NPOT,  // NPOT texture 600x479
             TexturePaintingB,       // 512x512
+            TextureDetailMap,       // 256x256
 
             TextureCount,
         };
@@ -152,8 +173,10 @@ class TestbedContext
         {
             SamplerNearest = 0,
             SamplerNearestClamp,
+            SamplerNearestNoMips,
             SamplerLinear,
             SamplerLinearClamp,
+            SamplerLinearNoMips,
 
             SamplerCount,
         };
@@ -188,6 +211,13 @@ class TestbedContext
             float position[3];
             float normal[3];
             float texCoord[2];
+        };
+
+        struct ColoredVertex
+        {
+            float position[4];
+            float normal[3];
+            float color[3];
         };
 
         struct UnprojectedVertex
@@ -272,6 +302,7 @@ class TestbedContext
 
         LLGL::RenderingDebugger         debugger;
         LLGL::RenderSystemPtr           renderer;
+        LLGL::RendererInfo              rendererInfo;
         LLGL::RenderingCapabilities     caps;
         LLGL::SwapChain*                swapChain               = nullptr;
         LLGL::CommandBuffer*            cmdBuffer               = nullptr;
@@ -321,6 +352,8 @@ class TestbedContext
         void CreateModelCube(IndexedTriangleMeshBuffer& scene, IndexedTriangleMesh& outMesh);
         void CreateModelRect(IndexedTriangleMeshBuffer& scene, IndexedTriangleMesh& outMesh);
 
+        void ConvertToColoredVertexList(const IndexedTriangleMeshBuffer& scene, std::vector<ColoredVertex>& outVertices, const LLGL::ColorRGBAf& color = {});
+
         void CreateConstantBuffers();
 
         LLGL::Shader* LoadShaderFromFile(
@@ -329,7 +362,8 @@ class TestbedContext
             const char*                 entry       = nullptr,
             const char*                 profile     = nullptr,
             const LLGL::ShaderMacro*    defines     = nullptr,
-            VertFmt                     vertFmt     = VertFmtStd
+            VertFmt                     vertFmt     = VertFmtStd,
+            VertFmt                     vertOutFmt  = VertFmtCount
         );
 
         void SaveColorImage(const std::vector<LLGL::ColorRGBub>& image, const LLGL::Extent2D& extent, const std::string& name);
@@ -344,6 +378,14 @@ class TestbedContext
         DiffResult DiffImages(const std::string& name, int threshold = 1, unsigned tolerance = 0, int scale = 1);
 
         void RecordTestResult(TestResult result, const char* name);
+
+        bool QueryResultsWithTimeout(
+            LLGL::QueryHeap&    queryHeap,
+            std::uint32_t       firstQuery,
+            std::uint32_t       numQueries,
+            void*               data,
+            std::size_t         dataSize
+        );
 
     private:
 

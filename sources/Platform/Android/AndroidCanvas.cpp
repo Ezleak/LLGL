@@ -7,6 +7,7 @@
 
 #include "AndroidCanvas.h"
 #include "AndroidApp.h"
+#include "AndroidInputEventHandler.h"
 #include "../../Core/CoreUtils.h"
 #include <LLGL/Platform/NativeHandle.h>
 
@@ -33,12 +34,6 @@ bool Surface::ProcessEvents()
             if (source != nullptr)
                 source->process(app, source);
 
-            /* Process sensor data */
-            /*if (ident == LOOPER_ID_USER)
-            {
-                //TODO
-            }*/
-
             /* Check if we are exiting */
             if (app->destroyRequested != 0)
                 return false;
@@ -58,19 +53,6 @@ std::unique_ptr<Canvas> Canvas::Create(const CanvasDescriptor& desc)
     return MakeUnique<AndroidCanvas>(desc);
 }
 
-static Extent2D GetAndroidContentRect()
-{
-    if (android_app* app = AndroidApp::Get().GetState())
-    {
-        return Extent2D
-        {
-            static_cast<std::uint32_t>(app->contentRect.right - app->contentRect.left),
-            static_cast<std::uint32_t>(app->contentRect.bottom - app->contentRect.top)
-        };
-    }
-    return Extent2D{};
-}
-
 
 /*
  * AndroidCanvas class
@@ -80,10 +62,12 @@ AndroidCanvas::AndroidCanvas(const CanvasDescriptor& desc) :
     desc_   { desc                                 },
     window_ { AndroidApp::Get().GetState()->window }
 {
+    AndroidInputEventHandler::Get().RegisterCanvas(this);
 }
 
 AndroidCanvas::~AndroidCanvas()
 {
+    AndroidInputEventHandler::Get().UnregisterCanvas(this);
 }
 
 bool AndroidCanvas::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -99,7 +83,7 @@ bool AndroidCanvas::GetNativeHandle(void* nativeHandle, std::size_t nativeHandle
 
 Extent2D AndroidCanvas::GetContentSize() const
 {
-    return GetAndroidContentRect();
+    return AndroidApp::GetContentRectSize(AndroidApp::Get().GetState());
 }
 
 void AndroidCanvas::SetTitle(const UTF8String& title)
@@ -112,9 +96,9 @@ UTF8String AndroidCanvas::GetTitle() const
     return {}; //todo...
 }
 
-void AndroidCanvas::ResetPixelFormat()
+void AndroidCanvas::UpdateNativeWindow(android_app* app)
 {
-    // dummy
+    window_ = (app != nullptr ? app->window : nullptr);
 }
 
 

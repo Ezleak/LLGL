@@ -56,7 +56,7 @@ class LLGLMeta:
     UTF8STRING = 'UTF8String'
     STRING = 'string'
     externals = [
-        ConditionalType('android_app', 'defined LLGL_OS_ANDROID', '<android_native_app_glue.h>')
+        ConditionalType('android_app', '__ANDROID__', '<android_native_app_glue.h>')
     ]
     builtins = {
         'void': StdType.VOID,
@@ -213,6 +213,9 @@ class LLGLType:
 
     def isPointerOrString(self):
         return self.isPointer or self.typename in [LLGLMeta.UTF8STRING, LLGLMeta.STRING]
+
+    def isStringOfAnyKind(self):
+        return self.typename in [LLGLMeta.UTF8STRING, LLGLMeta.STRING] or (self.isPointer and self.baseType in [StdType.CHAR, StdType.WCHAR])
 
     def getFixedBitsize(self):
         if self.baseType in [StdType.INT8, StdType.UINT8]:

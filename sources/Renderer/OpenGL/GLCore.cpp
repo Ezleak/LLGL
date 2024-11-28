@@ -159,11 +159,15 @@ struct GLVersion
 {
     GLVersion()
     {
+        #if defined(GL_MAJOR_VERSION) && defined(GL_MINOR_VERSION)
         GLint major = 0;
         glGetIntegerv(GL_MAJOR_VERSION, &major);
         GLint minor = 0;
         glGetIntegerv(GL_MINOR_VERSION, &minor);
         this->no = major * 100 + minor * 10;
+        #else
+        this->no = 200;
+        #endif
     }
     int no;
 };
@@ -177,10 +181,12 @@ int GLGetVersion()
 [[noreturn]]
 void ErrUnsupportedGLProc(const char* name)
 {
-    #ifdef LLGL_OPENGLES3
+    #if defined(LLGL_OPENGL)
+    LLGL_TRAP("illegal use of unsupported OpenGL procedure: %s", name);
+    #elif defined(LLGL_OS_WASM)
     LLGL_TRAP("illegal use of unsupported OpenGLES procedure: %s", name);
     #else
-    LLGL_TRAP("illegal use of unsupported OpenGL procedure: %s", name);
+    LLGL_TRAP("illegal use of unsupported WebGL procedure: %s", name);
     #endif
 }
 

@@ -21,6 +21,7 @@
 #include "../../BufferUtils.h"
 #include "../../StaticAssertions.h"
 #include "../../../Core/CoreUtils.h"
+#include "../../../Core/Assertion.h"
 #include <LLGL/ResourceHeapFlags.h>
 #include <LLGL/Utils/ForRange.h>
 #include <algorithm>
@@ -68,7 +69,7 @@ enum D3DResourceFlags : std::uint32_t
 };
 
 // Resource view heap (RVH) segment structure with up to three dynamic sub-buffers.
-struct D3DResourceHeapSegment
+struct alignas(sizeof(std::uintptr_t)) D3DResourceHeapSegment
 {
     std::uint32_t   size            : 28;
     std::uint32_t   flags           :  1; // D3DResourceFlags
@@ -118,7 +119,7 @@ D3D11ResourceHeap::D3D11ResourceHeap(
     /* Get pipeline layout object */
     auto* pipelineLayoutD3D = LLGL_CAST(D3D11PipelineLayout*, desc.pipelineLayout);
     if (!pipelineLayoutD3D)
-        throw std::invalid_argument("failed to create resource heap due to missing pipeline layout");
+        LLGL_TRAP("failed to create resource heap due to missing pipeline layout");
 
     /* Get and validate number of bindings and resource views */
     const auto&         bindings            = pipelineLayoutD3D->GetHeapBindings();
@@ -193,7 +194,7 @@ std::uint32_t D3D11ResourceHeap::WriteResourceViews(std::uint32_t firstDescripto
         /* Get SRV and UAV objects for textures and buffers */
         ID3D11ShaderResourceView* srv = nullptr;
         ID3D11UnorderedAccessView* uav = nullptr;
-        D3DSubresourceLocator subresourceLocator = {};
+        D3DSubresourceLocator subresourceLocator;
         SubresourceIndexContext subresourceContext;
 
         if (binding.type == D3DResourceType_SRV)
@@ -995,7 +996,7 @@ static D3D11SubresourceRange GetD3D11TextureSubresourceRange(D3D11Texture& textu
 
 ID3D11ShaderResourceView* D3D11ResourceHeap::GetOrCreateTextureSRV(D3D11Texture& textureD3D, const TextureViewDescriptor& textureViewDesc, D3DSubresourceLocator& outLocator)
 {
-    outLocator .locator = textureD3D.GetBindingLocator();
+    outLocator.locator  = textureD3D.GetBindingLocator();
     outLocator.range    = GetD3D11TextureSubresourceRange(textureD3D, textureViewDesc);
 
     if (IsTextureViewEnabled(textureViewDesc))
@@ -1058,8 +1059,7 @@ static UINT GetFormatBufferStride(const Format format)
     /* Get buffer stride by format */
     const FormatAttributes& formatAttribs = GetFormatAttribs(format);
     const UINT stride = (formatAttribs.bitSize / formatAttribs.blockWidth / formatAttribs.blockHeight / 8);
-    if (stride == 0)
-        throw std::runtime_error("cannot create buffer subresource with format stride of 0");
+    LLGL_ASSERT(stride > 0, "cannot create buffer subresource with format stride of 0");
     return stride;
 }
 

@@ -12,9 +12,7 @@
 #include "../Ext/GLExtensions.h"
 #include "../Buffer/GLBuffer.h"
 #include "../Texture/GLSampler.h"
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-#   include "../Texture/GL2XSampler.h"
-#endif
+#include "../Texture/GLEmulatedSampler.h"
 #include "../Texture/GLTexture.h"
 #include "../Texture/GLTextureViewPool.h"
 #include "../../CheckedCast.h"
@@ -73,7 +71,7 @@ enum GLResourceFlags : std::uint32_t
 };
 
 // Resource view heap (RVH) segment structure with up to three dynamic sub-buffers.
-struct GLResourceHeapSegment
+struct alignas(sizeof(std::uintptr_t)) GLResourceHeapSegment
 {
     std::uint32_t   size        : 28; // Byte size of this segment
     std::uint32_t   flags       :  1; // GLResourceFlags
@@ -116,12 +114,12 @@ GLResourceHeap::GLResourceHeap(
     /* Get pipeline layout object */
     auto pipelineLayoutGL = LLGL_CAST(const GLPipelineLayout*, desc.pipelineLayout);
     if (!pipelineLayoutGL)
-        throw std::invalid_argument("failed to create resource heap due to missing pipeline layout");
+        LLGL_TRAP("failed to create resource heap due to missing pipeline layout");
 
     /* Get and validate number of bindings and resource views */
-    const auto& bindings            = pipelineLayoutGL->GetHeapBindings();
-    const auto  numBindings         = static_cast<std::uint32_t>(bindings.size());
-    const auto  numResourceViews    = GetNumResourceViewsOrThrow(numBindings, desc, initialResourceViews);
+    const auto&         bindings            = pipelineLayoutGL->GetHeapBindings();
+    const std::uint32_t numBindings         = static_cast<std::uint32_t>(bindings.size());
+    const std::uint32_t numResourceViews    = GetNumResourceViewsOrThrow(numBindings, desc, initialResourceViews);
 
     /* Allocate array to map binding index to descriptor index */
     bindingMap_.resize(numBindings);
@@ -134,12 +132,9 @@ GLResourceHeap::GLResourceHeap(
     AllocSegmentsTexture(bindingIter);
     AllocSegmentsImage(bindingIter);
     AllocSegmentsSampler(bindingIter);
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
-    AllocSegmentsGL2XSampler(bindingIter);
-    #endif
 
     /* Finalize segments in buffer */
-    const auto numSegmentSets = (numResourceViews / numBindings);
+    const std::uint32_t numSegmentSets = (numResourceViews / numBindings);
     heap_.FinalizeSegments(numSegmentSets);
 
     /* Write initial resource views */
@@ -159,9 +154,9 @@ std::uint32_t GLResourceHeap::WriteResourceViews(std::uint32_t firstDescriptor, 
     if (resourceViews.empty())
         return 0;
 
-    const auto numSets          = GetNumDescriptorSets();
-    const auto numBindings      = static_cast<std::uint32_t>(bindingMap_.size());
-    const auto numDescriptors   = numSets * numBindings;
+    const std::uint32_t numSets         = GetNumDescriptorSets();
+    const std::uint32_t numBindings     = static_cast<std::uint32_t>(bindingMap_.size());
+    const std::uint32_t numDescriptors  = numSets * numBindings;
 
     /* Silently quit on out of bounds; debug layer must report these errors */
     if (firstDescriptor >= numDescriptors)
@@ -172,19 +167,18 @@ std::uint32_t GLResourceHeap::WriteResourceViews(std::uint32_t firstDescriptor, 
     /* Write each resource view into respective segment */
     std::uint32_t numWritten = 0;
 
-    for (const auto& desc : resourceViews)
+    for (const ResourceViewDescriptor& desc : resourceViews)
     {
         /* Skip over empty resource descriptors */
         if (desc.resource == nullptr)
             continue;
 
         /* Get binding information and heap start for descriptor set */
-        const auto& binding = bindingMap_[firstDescriptor % numBindings];
-
-        auto descriptorSet  = firstDescriptor / numBindings;
-        auto heapStartPtr   = heap_.SegmentData(descriptorSet);
-        auto heapPtr        = heapStartPtr + binding.segmentOffset;
-        auto segment        = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+        const BindingSegmentLocation&   binding         = bindingMap_[firstDescriptor % numBindings];
+        const std::uint32_t             descriptorSet   = firstDescriptor / numBindings;
+        char*                           heapStartPtr    = heap_.SegmentData(descriptorSet);
+        char*                           heapPtr         = heapStartPtr + binding.segmentOffset;
+        const GLResourceHeapSegment*    segment         = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
 
         /* Write descriptor into respective heap segment */
         switch (segment->type)
@@ -207,10 +201,8 @@ std::uint32_t GLResourceHeap::WriteResourceViews(std::uint32_t firstDescriptor, 
             case GLResourceType_Sampler:
                 WriteResourceViewSampler(desc, heapPtr, binding.descriptorIndex);
                 break;
-            case GLResourceType_GL2XSampler:
-                #ifdef LLGL_GL_ENABLE_OPENGL2X
-                WriteResourceViewGL2XSampler(desc, heapPtr, binding.descriptorIndex);
-                #endif
+            case GLResourceType_EmulatedSampler:
+                WriteResourceViewEmulatedSampler(desc, heapPtr, binding.descriptorIndex);
                 break;
         }
 
@@ -223,7 +215,7 @@ std::uint32_t GLResourceHeap::WriteResourceViews(std::uint32_t firstDescriptor, 
 
 static std::size_t BindBuffersSegment(GLStateManager& stateMngr, const char* heapPtr, const GLBufferTarget bufferTarget)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     {
         const bool hasBufferRangeData = ((segment->flags & GLResourceFlags_HasBufferRange) != 0);
         if (hasBufferRangeData)
@@ -252,7 +244,7 @@ static std::size_t BindBuffersSegment(GLStateManager& stateMngr, const char* hea
 
 static std::size_t BindTexturesSegment(GLStateManager& stateMngr, const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     {
         stateMngr.BindTextures(
             segment->first,
@@ -266,7 +258,7 @@ static std::size_t BindTexturesSegment(GLStateManager& stateMngr, const char* he
 
 static std::size_t BindImageTexturesSegment(GLStateManager& stateMngr, const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     {
         stateMngr.BindImageTextures(
             segment->first,
@@ -280,7 +272,7 @@ static std::size_t BindImageTexturesSegment(GLStateManager& stateMngr, const cha
 
 static std::size_t BindSamplersSegment(GLStateManager& stateMngr, const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     {
         stateMngr.BindSamplers(
             segment->first,
@@ -291,24 +283,20 @@ static std::size_t BindSamplersSegment(GLStateManager& stateMngr, const char* he
     return segment->size;
 }
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-
-static std::size_t BindTexturesWithGL2XSamplersSegment(GLStateManager& stateMngr, const char* heapPtr)
+static std::size_t BindTexturesWithEmulatedSamplersSegment(GLStateManager& stateMngr, const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     {
-        const auto texturesGL   = reinterpret_cast<GLTexture* const *>(heapPtr + sizeof(GLResourceHeapSegment));
-        const auto samplersGL2X = reinterpret_cast<const GL2XSampler* const *>(heapPtr + segment->data1Offset);
+        const auto* texturesGL   = reinterpret_cast<GLTexture* const *>(heapPtr + sizeof(GLResourceHeapSegment));
+        const auto* samplersGL2X = reinterpret_cast<const GLEmulatedSampler* const *>(heapPtr + segment->data1Offset);
         for_range(i, static_cast<GLuint>(segment->count))
         {
             const GLuint layer = segment->first + i;
-            stateMngr.BindCombinedGL2XSampler(layer, *samplersGL2X[i], *texturesGL[i]);
+            stateMngr.BindCombinedEmulatedSampler(layer, *samplersGL2X[i], *texturesGL[i]);
         }
     }
     return segment->size;
 }
-
-#endif // /LLGL_GL_ENABLE_OPENGL2X
 
 std::uint32_t GLResourceHeap::GetNumDescriptorSets() const
 {
@@ -320,7 +308,7 @@ void GLResourceHeap::Bind(GLStateManager& stateMngr, std::uint32_t descriptorSet
     if (descriptorSet >= heap_.NumSets())
         return;
 
-    auto heapPtr = heap_.SegmentData(descriptorSet);
+    char* heapPtr = heap_.SegmentData(descriptorSet);
 
     /* Bind all constant buffers */
     for_range(i, segmentation_.numUniformBufferSegments)
@@ -330,15 +318,13 @@ void GLResourceHeap::Bind(GLStateManager& stateMngr, std::uint32_t descriptorSet
     for_range(i, segmentation_.numStorageBufferSegments)
         heapPtr += BindBuffersSegment(stateMngr, heapPtr, GLBufferTarget::ShaderStorageBuffer);
 
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
     if (!HasNativeSamplers())
     {
         /* Bind all textures */
         for_range(i, segmentation_.numTextureSegments)
-            heapPtr += BindTexturesWithGL2XSamplersSegment(stateMngr, heapPtr);
+            heapPtr += BindTexturesWithEmulatedSamplersSegment(stateMngr, heapPtr);
     }
     else
-    #endif
     {
         /* Bind all textures */
         for_range(i, segmentation_.numTextureSegments)
@@ -388,7 +374,7 @@ bool GLResourceHeap::FreeTextureView(GLuint& texViewID)
 
 static std::uint32_t FreeSegmentTextureViews(const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    auto* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     if ((segment->flags & GLResourceFlags_HasTextureViews) != 0)
     {
         for_range(i, segment->count)
@@ -418,7 +404,7 @@ void GLResourceHeap::FreeAllSegmentSetTextureViews(const char* heapPtr)
 
 void GLResourceHeap::FreeAllSegmentsTextureViews()
 {
-    for (auto heapPtr = heap_.Data(); heapPtr != heap_.PayloadData(); heapPtr += heap_.Stride())
+    for (char* heapPtr = heap_.Data(); heapPtr != heap_.PayloadData(); heapPtr += heap_.Stride())
         FreeAllSegmentSetTextureViews(heapPtr);
 }
 
@@ -448,19 +434,18 @@ void GLResourceHeap::AllocSegmentsSSBO(BindingDescriptorIterator& bindingIter)
 
 void GLResourceHeap::AllocSegmentsTexture(BindingDescriptorIterator& bindingIter)
 {
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
-    if (HasNativeSamplers())
-    #endif
-    {
-        /* Collect all textures with sampled binding */
-        auto bindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Texture, BindFlags::Sampled);
+    /* If native samplers are not supported, all texture bindings are handled via the emulated sampler bindings; see AllocSegmentsEmulatedSampler() */
+    if (!HasNativeSamplers())
+        return;
 
-        /* Build all resource segments for type <GLResourceHeapSegment> */
-        segmentation_.numTextureSegments = GLResourceHeap::ConsolidateSegments(
-            bindingSlots,
-            BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc3PartSegment, GLResourceType_Texture, sizeof(GLuint), sizeof(GLTextureTarget), sizeof(GLuint))
-        );
-    }
+    /* Collect all textures with sampled binding */
+    auto bindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Texture, BindFlags::Sampled);
+
+    /* Build all resource segments for type <GLResourceHeapSegment> */
+    segmentation_.numTextureSegments = GLResourceHeap::ConsolidateSegments(
+        bindingSlots,
+        BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc3PartSegment, GLResourceType_Texture, sizeof(GLuint), sizeof(GLTextureTarget), sizeof(GLuint))
+    );
 }
 
 void GLResourceHeap::AllocSegmentsImage(BindingDescriptorIterator& bindingIter)
@@ -477,80 +462,73 @@ void GLResourceHeap::AllocSegmentsImage(BindingDescriptorIterator& bindingIter)
 
 void GLResourceHeap::AllocSegmentsSampler(BindingDescriptorIterator& bindingIter)
 {
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
     if (HasNativeSamplers())
-    #endif
-    {
-        /* Collect all samplers */
-        auto bindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Sampler, 0);
-
-        /* Allocate all resource segments for type <GLResourceHeap1PartSegment> */
-        segmentation_.numSamplerSegments = GLResourceHeap::ConsolidateSegments(
-            bindingSlots,
-            BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc1PartSegment, GLResourceType_Sampler, sizeof(GLuint))
-        );
-    }
+        AllocSegmentsNativeSampler(bindingIter);
+    else
+        AllocSegmentsEmulatedSampler(bindingIter);
 }
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-
-void GLResourceHeap::AllocSegmentsGL2XSampler(BindingDescriptorIterator& bindingIter)
+void GLResourceHeap::AllocSegmentsNativeSampler(BindingDescriptorIterator& bindingIter)
 {
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
-    if (!HasNativeSamplers())
-    #endif
-    {
-        /* Collect all textures with sampled binding */
-        auto textureBindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Texture, BindFlags::Sampled);
+    /* Collect all samplers */
+    auto bindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Sampler, 0);
 
-        /* Allocate all resource segments for type <GLResourceHeapSegment> */
-        segmentation_.numTextureSegments = GLResourceHeap::ConsolidateSegments(
-            textureBindingSlots,
-            BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc2PartSegment, GLResourceType_GL2XSampler, sizeof(GLTexture*), sizeof(const GL2XSampler*))
-        );
-
-        /* Collect all samplers states */
-        auto samplerBindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Sampler, 0);
-
-        /* Ensure there is exactly one sampler for each texture */
-        if (samplerBindingSlots.size() != textureBindingSlots.size())
-        {
-            throw std::invalid_argument(
-                "cannot create GL2.x resource heap with mismatching number of samplers (" +
-                std::to_string(samplerBindingSlots.size()) + ") and textures (" + std::to_string(textureBindingSlots.size()) + ")"
-            );
-        }
-
-        /* Ensure all samplers are distributed onto the same binding slots as the textures */
-        for (auto& samplerBinding : samplerBindingSlots)
-        {
-            /* Find corresponding texture binding */
-            const auto* textureBinding = FindInSortedArray<GLResourceBinding>(
-                textureBindingSlots.data(),
-                textureBindingSlots.size(),
-                [&samplerBinding](const GLResourceBinding& entry) -> int
-                {
-                    return (static_cast<int>(samplerBinding.slot) - static_cast<int>(entry.slot));
-                }
-            );
-            if (textureBinding != nullptr)
-            {
-                /* Copy binding segment location from texture to combine with sampler */
-                CopyBindingMapping(samplerBinding, *textureBinding);
-            }
-            else
-            {
-                throw std::invalid_argument(
-                    "cannot create GL2.x resource heap with missing texture for sampler at slot " +
-                    std::to_string(samplerBinding.slot)
-                );
-            }
-        }
-
-    }
+    /* Allocate all resource segments for type <GLResourceHeap1PartSegment> */
+    segmentation_.numSamplerSegments = GLResourceHeap::ConsolidateSegments(
+        bindingSlots,
+        BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc1PartSegment, GLResourceType_Sampler, sizeof(GLuint))
+    );
 }
 
-#endif // /LLGL_GL_ENABLE_OPENGL2X
+void GLResourceHeap::AllocSegmentsEmulatedSampler(BindingDescriptorIterator& bindingIter)
+{
+    /* Collect all textures with sampled binding */
+    auto textureBindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Texture, BindFlags::Sampled);
+
+    /* Allocate all resource segments for type <GLResourceHeapSegment> */
+    segmentation_.numTextureSegments = GLResourceHeap::ConsolidateSegments(
+        textureBindingSlots,
+        BIND_SEGMENT_ALLOCATOR(GLResourceHeap::Alloc2PartSegment, GLResourceType_EmulatedSampler, sizeof(GLTexture*), sizeof(const GLEmulatedSampler*))
+    );
+
+    /* Collect all samplers states */
+    auto samplerBindingSlots = FilterAndSortGLBindingSlots(bindingIter, ResourceType::Sampler, 0);
+
+    /* Ensure there is exactly one sampler for each texture */
+    if (samplerBindingSlots.size() != textureBindingSlots.size())
+    {
+        LLGL_TRAP(
+            "cannot create GL resource heap with mismatching number of emulated samplers (%zu) and textures (%zu)",
+            samplerBindingSlots.size(), textureBindingSlots.size()
+        );
+    }
+
+    /* Ensure all samplers are distributed onto the same binding slots as the textures */
+    for (GLResourceBinding& samplerBinding : samplerBindingSlots)
+    {
+        /* Find corresponding texture binding */
+        const GLResourceBinding* textureBinding = FindInSortedArray<GLResourceBinding>(
+            textureBindingSlots.data(),
+            textureBindingSlots.size(),
+            [&samplerBinding](const GLResourceBinding& entry) -> int
+            {
+                return (static_cast<int>(samplerBinding.slot) - static_cast<int>(entry.slot));
+            }
+        );
+        if (textureBinding != nullptr)
+        {
+            /* Copy binding segment location from texture to combine with sampler */
+            CopyBindingMapping(samplerBinding, *textureBinding);
+        }
+        else
+        {
+            LLGL_TRAP(
+                "cannot create GL resource heap with missing texture for emulated sampler at slot %u",
+                samplerBinding.slot
+            );
+        }
+    }
+}
 
 void GLResourceHeap::Alloc1PartSegment(
     GLResourceType              type,
@@ -562,11 +540,11 @@ void GLResourceHeap::Alloc1PartSegment(
     WriteBindingMappings(first, count);
 
     /* Allocate space for segment */
-    const auto  payloadSize     = static_cast<std::uint32_t>(payload0Stride * count);
-    auto        segmentAlloc    = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
+    const std::uint32_t payloadSize     = static_cast<std::uint32_t>(payload0Stride * count);
+    auto                segmentAlloc    = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
 
     /* Write segment header */
-    auto header = segmentAlloc.Header();
+    GLResourceHeapSegment* header = segmentAlloc.Header();
     {
         header->size        = segmentAlloc.Size();
         header->type        = type;
@@ -588,12 +566,12 @@ void GLResourceHeap::Alloc2PartSegment(
     WriteBindingMappings(first, count);
 
     /* Allocate space for segment */
-    const auto  payloadData1Offset  = static_cast<std::uint32_t>(payload0Stride * count);
-    const auto  payloadSize         = static_cast<std::uint32_t>(payload1Stride * count + payloadData1Offset);
-    auto        segmentAlloc        = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
+    const std::uint32_t payloadData1Offset  = static_cast<std::uint32_t>(payload0Stride * count);
+    const std::uint32_t payloadSize         = static_cast<std::uint32_t>(payload1Stride * count + payloadData1Offset);
+    auto                segmentAlloc        = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
 
     /* Write segment header */
-    auto header = segmentAlloc.Header();
+    GLResourceHeapSegment* header = segmentAlloc.Header();
     {
         header->size        = segmentAlloc.Size();
         header->type        = type;
@@ -616,13 +594,13 @@ void GLResourceHeap::Alloc3PartSegment(
     WriteBindingMappings(first, count);
 
     /* Allocate space for segment */
-    const auto  payloadData1Offset  = static_cast<std::uint32_t>(payload0Stride * count);
-    const auto  payloadData2Offset  = static_cast<std::uint32_t>(payload1Stride * count + payloadData1Offset);
-    const auto  payloadSize         = static_cast<std::uint32_t>(payload2Stride * count + payloadData2Offset);
-    auto        segmentAlloc        = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
+    const std::uint32_t payloadData1Offset  = static_cast<std::uint32_t>(payload0Stride * count);
+    const std::uint32_t payloadData2Offset  = static_cast<std::uint32_t>(payload1Stride * count + payloadData1Offset);
+    const std::uint32_t payloadSize         = static_cast<std::uint32_t>(payload2Stride * count + payloadData2Offset);
+    auto                segmentAlloc        = heap_.AllocSegment<GLResourceHeapSegment>(payloadSize);
 
     /* Write segment header */
-    auto header = segmentAlloc.Header();
+    GLResourceHeapSegment* header = segmentAlloc.Header();
     {
         header->size        = segmentAlloc.Size();
         header->type        = type;
@@ -638,7 +616,7 @@ void GLResourceHeap::WriteBindingMappings(const GLResourceBinding* first, Segmen
     for_range(i, count)
     {
         LLGL_ASSERT(first[i].index < bindingMap_.size());
-        auto& mapping = bindingMap_[first[i].index];
+        BindingSegmentLocation& mapping = bindingMap_[first[i].index];
         mapping.segmentOffset   = static_cast<std::uint32_t>(heap_.Size());
         mapping.descriptorIndex = i;
     }
@@ -654,7 +632,7 @@ void GLResourceHeap::CopyBindingMapping(const GLResourceBinding& dst, const GLRe
 void GLResourceHeap::WriteResourceViewBuffer(const ResourceViewDescriptor& desc, char* heapPtr, std::uint32_t index, long anyBindFlags)
 {
     /* Get buffer resource and its size parameter */
-    auto bufferGL = LLGL_CAST(GLBuffer*, GetAsExpectedBuffer(desc.resource, anyBindFlags));
+    auto* bufferGL = LLGL_CAST(GLBuffer*, GetAsExpectedBuffer(desc.resource, anyBindFlags));
 
     GLint bufferSize = 0;
     bufferGL->GetBufferParams(&bufferSize, nullptr, nullptr);
@@ -691,7 +669,7 @@ void GLResourceHeap::WriteResourceViewSSBO(const ResourceViewDescriptor& desc, c
 // Returns true if the segment at the specified heap position contains any texture views.
 static bool HasTextureSegmentAnyTextureViews(const char* heapPtr)
 {
-    auto segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
+    const GLResourceHeapSegment* segment = GLRESOURCEHEAP_CONST_SEGMENT(heapPtr);
     for_range(i, segment->count)
     {
         if (GLRESOURCEHEAP_DATA2(heapPtr, const GLuint)[i] != 0)
@@ -703,7 +681,7 @@ static bool HasTextureSegmentAnyTextureViews(const char* heapPtr)
 // Updates the segment flags for the specified heap position if any texture views have been added or removed from the segment.
 static void UpdateTextureSegmentFlags(char* heapPtr, bool isAnyTextureViewAdded, bool isAnyTextureViewRemoved)
 {
-    auto segment = GLRESOURCEHEAP_SEGMENT(heapPtr);
+    GLResourceHeapSegment* segment = GLRESOURCEHEAP_SEGMENT(heapPtr);
     if (isAnyTextureViewAdded)
     {
         /* Mark segment to have texture views */
@@ -723,7 +701,7 @@ void GLResourceHeap::WriteResourceViewTexture(const ResourceViewDescriptor& desc
     bool isAnyTextureViewRemoved = false;
 
     /* Get texture resource and its size parameter */
-    auto textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
+    auto* textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
 
     if (IsTextureViewEnabled(desc.textureView))
     {
@@ -756,7 +734,7 @@ void GLResourceHeap::WriteResourceViewImage(const ResourceViewDescriptor& desc, 
     bool isAnyTextureViewRemoved = false;
 
     /* Get texture resource and its size parameter */
-    auto textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
+    auto* textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
 
     if (IsTextureViewEnabled(desc.textureView))
     {
@@ -786,30 +764,26 @@ void GLResourceHeap::WriteResourceViewImage(const ResourceViewDescriptor& desc, 
 void GLResourceHeap::WriteResourceViewSampler(const ResourceViewDescriptor& desc, char* heapPtr, std::uint32_t index)
 {
     /* Get sampler resource and write sampler ID to segment (GLuint) */
-    auto samplerGL = LLGL_CAST(GLSampler*, GetAsExpectedSampler(desc.resource));
+    auto* samplerGL = LLGL_CAST(GLSampler*, GetAsExpectedSampler(desc.resource));
     GLRESOURCEHEAP_DATA0(heapPtr, GLuint)[index] = samplerGL->GetID();
 }
 
-#ifdef LLGL_GL_ENABLE_OPENGL2X
-
-void GLResourceHeap::WriteResourceViewGL2XSampler(const ResourceViewDescriptor& desc, char* heapPtr, std::uint32_t index)
+void GLResourceHeap::WriteResourceViewEmulatedSampler(const ResourceViewDescriptor& desc, char* heapPtr, std::uint32_t index)
 {
     /* Combine texture and sampler into same segment entry */
     if (desc.resource != nullptr && desc.resource->GetResourceType() == ResourceType::Sampler)
     {
-        /* Get sampler resource and write sampler reference to segment (const GL2XSampler*) */
-        auto samplerGL2X = LLGL_CAST(const GL2XSampler*, GetAsExpectedSampler(desc.resource));
-        GLRESOURCEHEAP_DATA1(heapPtr, const GL2XSampler*)[index] = samplerGL2X;
+        /* Get sampler resource and write sampler reference to segment (const GLEmulatedSampler*) */
+        auto* emulatedSamplerGL = LLGL_CAST(const GLEmulatedSampler*, GetAsExpectedSampler(desc.resource));
+        GLRESOURCEHEAP_DATA1(heapPtr, const GLEmulatedSampler*)[index] = emulatedSamplerGL;
     }
     else
     {
         /* Get texture resource and write texture reference to segment (GLTexture*) */
-        auto textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource));
+        auto* textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource));
         GLRESOURCEHEAP_DATA0(heapPtr, GLTexture*)[index] = textureGL;
     }
 }
-
-#endif // /LLGL_GL_ENABLE_OPENGL2X
 
 std::vector<GLResourceHeap::GLResourceBinding> GLResourceHeap::FilterAndSortGLBindingSlots(
     BindingDescriptorIterator&  bindingIter,
@@ -822,7 +796,7 @@ std::vector<GLResourceHeap::GLResourceBinding> GLResourceHeap::FilterAndSortGLBi
     std::vector<GLResourceBinding> resourceBindings;
     resourceBindings.reserve(bindingIter.GetCount());
 
-    for (std::size_t index = 0; const auto* bindingDesc = bindingIter.Next(&index);)
+    for (std::size_t index = 0; const BindingDescriptor* bindingDesc = bindingIter.Next(&index);)
         resourceBindings.push_back({ static_cast<GLuint>(bindingDesc->slot.index), index });
 
     /* Sort resources by slot index */

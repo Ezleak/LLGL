@@ -38,7 +38,8 @@ static LLGL::Extent2D GetScaledResolutionByDisplayScale(CGSize size, const LLGL:
 
 @implementation IOSCanvasViewController
 {
-    LLGL::IOSCanvas* canvas_;
+    LLGL::IOSCanvas*    canvas_;
+    CGPoint             oldPanLocation_;
 }
 
 - (nonnull instancetype)initWithCanvas:(nonnull LLGL::IOSCanvas*)canvas;
@@ -86,9 +87,41 @@ static LLGL::Offset2D MapUIGestureLocation(UIGestureRecognizer* recognizer, UIVi
 - (void)handlePanGesture:(UIPanGestureRecognizer*)recognizer
 {
     UIView* view = canvas_->GetUIWindow();
+
     const std::uint32_t numTouches = static_cast<std::uint32_t>([recognizer numberOfTouches]);
-    CGPoint velocity = [recognizer translationInView:view];
-    canvas_->PostPanGesture(MapUIGestureLocation(recognizer, view), numTouches, velocity.x, velocity.y);
+    CGPoint nativePosition = [recognizer locationInView:view];
+    const LLGL::Offset2D position{ static_cast<std::int32_t>(nativePosition.x), static_cast<std::int32_t>(nativePosition.y) };
+
+    switch ([recognizer state])
+    {
+        case UIGestureRecognizerStateBegan:
+        {
+            canvas_->PostPanGesture(position, numTouches, 0.0f, 0.0f, LLGL::EventAction::Began);
+        }
+        break;
+
+        case UIGestureRecognizerStateChanged:
+        {
+            CGPoint velocity = CGPointMake(nativePosition.x - oldPanLocation_.x, nativePosition.y - oldPanLocation_.y);
+            canvas_->PostPanGesture(position, numTouches, velocity.x, velocity.y, LLGL::EventAction::Changed);
+        }
+        break;
+
+        case UIGestureRecognizerStateCancelled:
+        case UIGestureRecognizerStateEnded:
+        {
+            canvas_->PostPanGesture(position, numTouches, 0.0f, 0.0f, LLGL::EventAction::Ended);
+        }
+        break;
+
+        default:
+        {
+            // don't forward states that are unrecognized by LLGL
+        }
+        break;
+    }
+
+    oldPanLocation_ = nativePosition;
 }
 
 @end
@@ -192,16 +225,6 @@ void IOSCanvas::SetTitle(const UTF8String& title)
 UTF8String IOSCanvas::GetTitle() const
 {
     return {}; //todo...
-}
-
-
-/*
- * ======= Private: =======
- */
-
-void IOSCanvas::ResetPixelFormat()
-{
-    // dummy
 }
 
 

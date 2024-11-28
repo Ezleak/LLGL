@@ -10,6 +10,7 @@
 
 
 #include <LLGL-C/LLGLWrapper.h>
+#include <LLGL-C/FlagsAndDescriptors.h>
 #include <LLGL-C/Window.h>
 #include <LLGL-C/Canvas.h>
 #include <LLGL-C/Display.h>
@@ -17,10 +18,13 @@
 #include <LLGL-C/Report.h>
 #include <LLGL-C/RenderingDebugger.h>
 #include <LLGL-C/RenderSystem.h>
+#include <LLGL-C/RenderSystemChild.h>
 #include <LLGL-C/CommandBuffer.h>
 #include <LLGL-C/SwapChain.h>
 #include <LLGL-C/Resource.h>
+#include <LLGL-C/ResourceHeap.h>
 #include <LLGL-C/Buffer.h>
+#include <LLGL-C/BufferArray.h>
 #include <LLGL-C/Texture.h>
 #include <LLGL-C/Shader.h>
 #include <LLGL-C/PipelineLayout.h>

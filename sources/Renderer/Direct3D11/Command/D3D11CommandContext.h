@@ -80,6 +80,8 @@ class D3D11CommandContext
         void DrawIndexedInstancedIndirect(ID3D11Buffer* bufferForArgs, UINT alignedByteOffsetForArgs);
         void DrawIndexedInstancedIndirectN(ID3D11Buffer* bufferForArgs, UINT alignedByteOffsetForArgs, UINT numCommands, UINT stride);
 
+        void DrawAuto();
+
         void Dispatch(UINT numWorkGroupsX, UINT numWorkGroupsY, UINT numWorkGroupsZ);
         void DispatchIndirect(ID3D11Buffer* bufferForArgs, UINT alignedByteOffsetForArgs);
 
@@ -89,6 +91,12 @@ class D3D11CommandContext
         inline ID3D11DeviceContext* GetNative() const
         {
             return context_.Get();
+        }
+
+        // Returns a pointer to the state manager for this command context.
+        inline D3D11StateManager* GetStateManagerPtr() const
+        {
+            return stateMngr_.get();
         }
 
         // Returns the state manager for this command context.

@@ -21,6 +21,7 @@ THIS HEADER MUST BE EXPLICITLY INCLUDED
 #include <LLGL/RenderingDebugger.h>
 #include <LLGL/RenderSystemFlags.h>
 #include <LLGL/PipelineStateFlags.h>
+#include <LLGL/QueryHeapFlags.h>
 
 
 namespace LLGL
@@ -34,7 +35,7 @@ namespace LLGL
 */
 
 /**
-\brief Returns a string representation for the spcified ShaderType value, or null if the input type is invalid.
+\brief Returns a string representation for the specified ShaderType value, or null if the input type is invalid.
 \remarks Return value examples are \c "vertex", \c "tessellation control".
 */
 LLGL_EXPORT const char* ToString(const ShaderType val);
@@ -86,6 +87,18 @@ LLGL_EXPORT const char* ToString(const BlendOp val);
 \remarks Return value examples are \c "buffer", \c "texture".
 */
 LLGL_EXPORT const char* ToString(const ResourceType val);
+
+/**
+\brief Returns a string representation for the specified SystemValue value, or null if the input type is invalid.
+\remarks Return value examples are \c "Position", \c "ClipDistance".
+*/
+LLGL_EXPORT const char* ToString(const SystemValue val);
+
+/**
+\brief Returns a string representation for the specified QueryType value, or null if the input type is invalid.
+\remarks Return value examples are \c "SamplesPassed", \c "AnySamplesPassed".
+*/
+LLGL_EXPORT const char* ToString(const QueryType val);
 
 /** @} */
 

@@ -10,7 +10,7 @@
 #include "LinuxWindow.h"
 #include "MapKey.h"
 #include "../../Core/CoreUtils.h"
-#include <exception>
+#include "../../Core/Exception.h"
 #include <X11/Xresource.h>
 
 
@@ -155,11 +155,6 @@ bool LinuxWindow::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSi
     return false;
 }
 
-void LinuxWindow::ResetPixelFormat()
-{
-    // dummy
-}
-
 Extent2D LinuxWindow::GetContentSize() const
 {
     /* Return the size of the client area */
@@ -285,9 +280,10 @@ void LinuxWindow::OpenX11Window()
 {
     /* Get native context handle */
     const NativeHandle* nativeHandle = reinterpret_cast<const NativeHandle*>(desc_.windowContext);
-    if (nativeHandle != nullptr && desc_.windowContextSize == sizeof(NativeHandle))
+    if (nativeHandle != nullptr)
     {
         /* Get X11 display from context handle */
+        LLGL_ASSERT(desc_.windowContextSize == sizeof(NativeHandle));
         display_    = nativeHandle->display;
         visual_     = nativeHandle->visual;
     }
@@ -300,7 +296,7 @@ void LinuxWindow::OpenX11Window()
     }
 
     if (!display_)
-        throw std::runtime_error("failed to open X11 display");
+        LLGL_TRAP("failed to open X11 display");
 
     /* Setup common parameters for window creation */
     ::Window    rootWnd     = (nativeHandle != nullptr ? nativeHandle->window : DefaultRootWindow(display_));

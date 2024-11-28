@@ -77,6 +77,28 @@ class LLGL_EXPORT SwapChain : public RenderTarget
         /* ----- Back Buffer ----- */
 
         /**
+        \brief Returns true if this swap-chain is ready for rendering and presenting. Otherwise, the native surface or back buffer are not available.
+        \remarks This is mostly used for mobile platforms where the surface can be temporarily destroyed when the app is paused and later re-initialized when the app resumes.
+        If this is false, no rendering to this swap-chain must be performed nor can the back buffer be presented.
+        \remarks A safe way to handle the event of a lost native surface is to skip the entire rendering when this returns false as shown below:
+        \code
+        while (LLGL::Surface::ProcessEvents()) {
+            // Skip frame if swap-chain is currently not presentable
+            if (!swapChain->IsPresentable()) {
+                std::this_thread::yield();
+                continue;
+            }
+
+            // Render frame ...
+
+            // Present swap-chain back buffer
+            swapChain->Present();
+        }
+        \endcode
+        */
+        virtual bool IsPresentable() const = 0;
+
+        /**
         \brief Swaps the current back buffer with the front buffer to present it on the screen.
         \see GetCurrentSwapIndex
         */
@@ -138,7 +160,7 @@ class LLGL_EXPORT SwapChain : public RenderTarget
         bool ResizeBuffers(const Extent2D& resolution, long flags = 0);
 
         /**
-        \brief Sets the new vertical sychronization (V-sync) interval for this swap chain.
+        \brief Sets the new vertical synchronization (V-sync) interval for this swap chain.
         \param[in] vsyncInterval Specifies the new V-sync interface.
         \return True on success, otherwise the V-sync value is invalid for this swap chain.
         \remarks This is typically 0 to disable V-sync or 1 to enable V-sync, but higher values are possible, too.
@@ -191,21 +213,27 @@ class LLGL_EXPORT SwapChain : public RenderTarget
         \brief Sets the swap-chain surface or creates one if 'surface' is null, and switches to fullscreen mode if enabled.
         \param[in] surface Optional shared pointer to a surface which will be used as main render target.
         If this is null, a new surface is created for this swap-chain.
+        \param[in] title Specifies the surface title. This is only used if \c surface is null.
         \param[in] size Specifies the surface content size. This is only used if \c surface is null.
         Otherwise, the size is determined by the content size of the specified surface (i.e. with the Surface::GetContentSize function).
         \param[in] fullscreen Specifies whether to put the surface into fullscreen mode.
         \param[in] windowContext Optional pointer to a NativeHandle structure. This is only used for desktop platforms.
+        \param[in] windowContextSize Size (in bytes) of the native handle \c windowContext points to. This must be equal to \c sizeof(LLGL::NativeHandle).
         \see WindowDescriptor::windowContext
         \see Surface::GetContentSize
         \see SwitchFullscreenMode
         */
         void SetOrCreateSurface(
             const std::shared_ptr<Surface>& surface,
+            const UTF8String&               title,
             const Extent2D&                 size,
             bool                            fullscreen,
             const void*                     windowContext       = nullptr,
             std::size_t                     windowContextSize   = 0
         );
+
+        //! Shows the swap-chain surface if it's not the same as the input surface.
+        void ShowSurface();
 
         /**
         \brief Shares the surface and resolution with another swap-chain.
@@ -224,6 +252,17 @@ class LLGL_EXPORT SwapChain : public RenderTarget
         \see SetDisplayFullscreenMode
         */
         bool ResetDisplayFullscreenMode();
+
+    protected:
+
+        /**
+        \brief Builds a default title for the swap-chain surface when no custom surface is specified.
+        \remarks This has the format \c "LLGL SURFACE NUMBER ( RENDERER )":
+        - \c SURFACE is either "Window" on desktop platforms or "Canvas" on mobile platforms.
+        - \c NUMBER denotes the number of the swap-chain starting at 1.
+        - \c RENDERER denotes the renderer name (see RendererInfo::rendererName).
+        */
+        static UTF8String BuildDefaultSurfaceTitle(const RendererInfo& info);
 
     private:
 

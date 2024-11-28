@@ -10,6 +10,8 @@
 
 
 #include <LLGL/Container/ArrayView.h>
+#include <LLGL/Deprecated.h>
+#include <LLGL/Platform/Platform.h>
 #include <cstdint>
 
 
@@ -25,6 +27,15 @@ namespace LLGL
 */
 enum class OpenGLContextProfile
 {
+    /**
+    \brief Automatic profile selection.
+    \remarks This will automatically select the preferred profile for the platform,
+    i.e. OpenGLContextProfile::CompatibilityProfile for desktop OpenGL when \c LLGL_GL_ENABLE_OPENGL2X is defined,
+    OpenGLContextProfile::CoreProfile for desktop OpenGL when \c LLGL_GL_ENABLE_OPENGL2X is \e not defined,
+    and OpenGLContextProfile::ESProfile for mobile OpenGLES.
+    */
+    Auto,
+
     //! OpenGL compatibility profile.
     CompatibilityProfile,
 
@@ -33,9 +44,13 @@ enum class OpenGLContextProfile
 
     /**
     \brief OpenGL ES profile.
-    \note Only supported on: Android and iOS.
+    \remarks This profile is used for both OpenGL ES and WebGL since WebGL shaders also refer to the ES profile.
+    \note Only supported on: Android, iOS, and WebAssembly.
     */
     ESProfile,
+
+    //! \deprecated Since 0.04b; Use OpenGLContextProfile::Auto instead!
+    DefaultProfile = Auto, // DEPRECATED
 };
 
 
@@ -100,13 +115,13 @@ struct RendererConfigurationVulkan
 };
 
 /**
-\brief OpenGL profile descriptor structure.
+\brief OpenGL/OpenGLES profile descriptor structure.
 \note On MacOS the only supported OpenGL profiles are compatibility profile (for lagecy OpenGL before 3.0), 3.2 core profile, or 4.1 core profile.
 */
 struct RendererConfigurationOpenGL
 {
-    //! Specifies the requested OpenGL context profile. By default OpenGLContextProfile::CoreProfile.
-    OpenGLContextProfile    contextProfile              = OpenGLContextProfile::CoreProfile;
+    //! Specifies the requested OpenGL context profile. By default OpenGLContextProfile::Auto.
+    OpenGLContextProfile    contextProfile              = OpenGLContextProfile::Auto;
 
     /**
     \brief Specifies the requested OpenGL context major version. By default 0.
@@ -125,23 +140,14 @@ struct RendererConfigurationOpenGL
     /**
     \brief Specifies whether to suppress failures when loading OpenGL extensions. By default false.
     \remarks If this is false, failed GL extensions will abort the current application and
-    the repesctive extension and procedure name is printed to standard error output.
+    the respective extension and procedure name is printed to standard error output.
     */
     bool                    suppressFailedExtensions    = false;
 };
 
-/**
-\brief OpenGL ES 3 profile descriptor structure.
-\todo Replace with RendererConfigurationOpenGL and make use of OpenGLContextProfile::ESProfile.
-*/
-struct RendererConfigurationOpenGLES3
-{
-    //! Specifies the requested OpenGL ES context major version. Must be 3. By default 3.
-    int majorVersion = 3;
-
-    //! Specifies the requested OpenGL ES context minor version. Must be 0, 1, or 2. By default 0.
-    int minorVersion = 0;
-};
+//! \deprecated Since 0.04b; Use RendererConfigurationOpenGL instead!
+LLGL_DEPRECATED("LLGL::RendererConfigurationOpenGLES3 is deprecated since 0.04b; Use LLGL::RendererConfigurationOpenGL instead!", "RendererConfigurationOpenGL")
+typedef RendererConfigurationOpenGL RendererConfigurationOpenGLES3;
 
 
 } // /namespace LLGL

@@ -68,7 +68,7 @@ static bool IsFilteredNSEventType(NSEventType type)
 
 bool Surface::ProcessEvents()
 {
-    LLGL_MACOS_AUTORELEASEPOOL_OPEN
+    DrainAutoreleasePool();
 
     /* Process NSWindow events with latest event types */
     while (NSEvent* event = [NSApp nextEventMatchingMask:g_EventMaskAny untilDate:nil inMode:NSDefaultRunLoopMode dequeue:YES])
@@ -91,8 +91,6 @@ bool Surface::ProcessEvents()
         [NSApp sendEvent:event];
     }
 
-    LLGL_MACOS_AUTORELEASEPOOL_CLOSE
-
     return true;
 }
 
@@ -101,15 +99,12 @@ bool Surface::ProcessEvents()
  * Window class
  */
 
-static NSString* ToNSString(const UTF8String& s)
+static NSString* ToNewNSString(const UTF8String& s)
 {
-    return
-    [
-        [[NSString alloc]
-            initWithBytes:  s.c_str()
-            length:         sizeof(char)*s.size()
-            encoding:       NSUTF8StringEncoding
-        ] autorelease
+    return [[NSString alloc]
+        initWithBytes:  s.c_str()
+        length:         sizeof(char)*s.size()
+        encoding:       NSUTF8StringEncoding
     ];
 }
 
@@ -159,6 +154,7 @@ MacOSWindow::MacOSWindow(const WindowDescriptor& desc) :
 
 MacOSWindow::~MacOSWindow()
 {
+#if 0 //TODO: Remove entirely? Crahes on MacOSX 10.6, likely because of NSAutoreleasePool.
     if (wnd_ != nullptr)
     {
         [wnd_ setDelegate:nil];
@@ -166,6 +162,7 @@ MacOSWindow::~MacOSWindow()
     }
     if (wndDelegate_ != nullptr)
         [wndDelegate_ release];
+#endif
 }
 
 bool MacOSWindow::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -179,16 +176,15 @@ bool MacOSWindow::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSi
     return false;
 }
 
-void MacOSWindow::ResetPixelFormat()
-{
-    // dummy
-}
-
 Extent2D MacOSWindow::GetContentSize() const
 {
     NSSize size = [[wnd_ contentView] frame].size;
 
+    #if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12
     const CGFloat scaleFactor = [wnd_ backingScaleFactor];
+    #else
+    const CGFloat scaleFactor = 1.0;
+    #endif
 
     return Extent2D
     {
@@ -289,7 +285,9 @@ Extent2D MacOSWindow::GetSize(bool useClientArea) const
 
 void MacOSWindow::SetTitle(const UTF8String& title)
 {
-    [wnd_ setTitle:ToNSString(title.c_str())];
+    NSString* titleNS = ToNewNSString(title.c_str());
+    [wnd_ setTitle:titleNS];
+    [titleNS release];
 }
 
 UTF8String MacOSWindow::GetTitle() const
@@ -418,12 +416,14 @@ NSWindow* MacOSWindow::CreateNSWindow(const WindowDescriptor& desc)
     CGFloat w = static_cast<CGFloat>(desc.size.width);
     CGFloat h = static_cast<CGFloat>(desc.size.height);
 
+    #if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12
     if ((desc.flags & WindowFlags::DisableSizeScaling) != 0)
     {
         const CGFloat scaleFactor = [[NSScreen mainScreen] backingScaleFactor];
         w /= scaleFactor;
         h /= scaleFactor;
     }
+    #endif
 
     NSWindow* wnd = [[NSWindow alloc]
         initWithContentRect:    NSMakeRect(0, 0, w, h)
@@ -435,7 +435,10 @@ NSWindow* MacOSWindow::CreateNSWindow(const WindowDescriptor& desc)
     /* Set initial window properties */
     [wnd setDelegate:wndDelegate_];
     [wnd setAcceptsMouseMovedEvents:YES];
-    [wnd setTitle:ToNSString(desc.title.c_str())];
+
+    NSString* titleNS = ToNewNSString(desc.title.c_str());
+    [wnd setTitle:titleNS];
+    [titleNS release];
 
     #if 0
     /* Set window collection behavior for resize events */
@@ -444,24 +447,29 @@ NSWindow* MacOSWindow::CreateNSWindow(const WindowDescriptor& desc)
     #endif
 
     const bool isCentered = ((desc.flags & WindowFlags::Centered) != 0);
+    const bool isVisible = ((desc.flags & WindowFlags::Visible) != 0);
+
+    /* Make this the new key window but only put it into the front if it's initially visible */
+    if (isVisible)
+        [wnd makeKeyAndOrderFront:nil];
+    else
+        [wnd makeKeyWindow];
 
     /* Move this window to the front of the screen list and center if requested */
-    [wnd makeKeyAndOrderFront:nil];
     if (isCentered)
         [wnd center];
     else
         SetRelativeNSWindowPosition(wnd, desc.position);
 
-    /* Show window */
-    if ((desc.flags & WindowFlags::Visible) != 0)
-        [wnd setIsVisible:YES];
+    /* Show or hide window */
+    [wnd setIsVisible:(isVisible ? YES : NO)];
 
     return wnd;
 }
 
 MacOSWindowDelegate* MacOSWindow::CreateNSWindowDelegate(const WindowDescriptor& desc)
 {
-    return [[MacOSWindowDelegate alloc] initWithWindow:this];
+    return [[MacOSWindowDelegate alloc] initWithPlatformWindow:this];
 }
 
 void MacOSWindow::ProcessKeyEvent(NSEvent* event, bool down)

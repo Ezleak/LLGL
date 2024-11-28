@@ -58,9 +58,11 @@ public:
 
         #if 0
         // Show some information
-        std::cout << "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube" << std::endl;
-        std::cout << "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube" << std::endl;
-        std::cout << "press RETURN KEY to save the render target texture to a PNG file" << std::endl;
+        LLGL::Log::Printf(
+            "press LEFT MOUSE BUTTON and move the mouse on the X-axis to rotate the OUTER cube\n"
+            "press RIGHT MOUSE BUTTON and move the mouse on the X-axis to rotate the INNER cube\n"
+            "press RETURN KEY to save the render target texture to a PNG file\n"
+        );
         #endif
     }
 
@@ -101,7 +103,7 @@ private:
 
             vsStencil = LoadShader({ LLGL::ShaderType::Vertex, "Example.hlsl", "VStencil", "vs_5_0" }, { vertexFormat });
         }
-        else if (Supported(LLGL::ShadingLanguage::GLSL))
+        else if (Supported(LLGL::ShadingLanguage::GLSL) || Supported(LLGL::ShadingLanguage::ESSL))
         {
             vsScene = LoadShader({ LLGL::ShaderType::Vertex,   "Scene.vert" }, { vertexFormat });
             fsScene = LoadShader({ LLGL::ShaderType::Fragment, "Scene.frag" });
@@ -148,6 +150,7 @@ private:
                 pipelineDesc.rasterizer.multiSampleEnabled  = (GetSampleCount() > 1);
             }
             pipelineScene = renderer->CreatePipelineState(pipelineDesc);
+            ReportPSOErrors(pipelineScene);
         }
 
         // Create graphics pipeline for stencil-write rendering
@@ -170,6 +173,7 @@ private:
                 pipelineDesc.blend.targets[0].colorMask     = 0x0;                              // Write no color bits
             }
             pipelineStencilWrite = renderer->CreatePipelineState(pipelineDesc);
+            ReportPSOErrors(pipelineStencilWrite);
         }
 
         // Create graphics pipeline for stencil-read rendering
@@ -191,6 +195,7 @@ private:
                 pipelineDesc.rasterizer.multiSampleEnabled  = (GetSampleCount() > 1);
             }
             pipelineStencilRead = renderer->CreatePipelineState(pipelineDesc);
+            ReportPSOErrors(pipelineStencilRead);
         }
     }
 

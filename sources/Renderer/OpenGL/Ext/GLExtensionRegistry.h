@@ -77,6 +77,7 @@ enum class GLExt
     ARB_texture_storage_multisample,
     ARB_texture_view,                   // GL 4.3
     ARB_timer_query,
+    ARB_transform_feedback2,            // GL 4.0
     ARB_transform_feedback3,
     ARB_uniform_buffer_object,
     ARB_vertex_array_object,
@@ -103,7 +104,7 @@ enum class GLExt
     EXT_stencil_two_side,               //ATI_separate_stencil,
     EXT_texture3D,                      // GL 1.2
     EXT_texture_array,                  // no procedures
-    EXT_transform_feedback,
+    EXT_transform_feedback,             // GL 3.0
 
     /* OpenGLES specific extensions (GLES) */
     OES_tessellation_shader,            // GLES 3.2
@@ -115,6 +116,9 @@ enum class GLExt
 
     /* Intel sepcific extensions (INTEL) */
     INTEL_conservative_rasterization,   // no procedures
+
+    /* Substitute extensions for GL 2.x only - do *not* used in HasExtension() calls! */
+    EXT_framebuffer_object,
 
     /* Enumeration entry counter */
     Count,
@@ -129,9 +133,6 @@ bool HasExtension(const GLExt extension);
 
 // Returns ture if GL_ARB_sampler_objects is supported. Shortcut for 'HasExtension(GLExt::ARB_sampler_objects)'.
 bool HasNativeSamplers();
-
-// Returns true if GL_ARB_vertex_array_object is supported. Shortcut for 'HasExtension(GLExt::ARB_vertex_array_object)'.
-bool HasNativeVAO();
 
 
 } // /namespace LLGL

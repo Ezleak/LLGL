@@ -9,7 +9,7 @@
 #define LLGL_GL_STATE_H
 
 
-#include "../GLProfile.h"
+#include "../Profile/GLProfile.h"
 
 
 namespace LLGL
@@ -18,6 +18,7 @@ namespace LLGL
 
 class GLPipelineLayout;
 class GLPipelineState;
+class GLBufferWithXFB;
 
 /* ----- Enumerations ----- */
 
@@ -26,6 +27,8 @@ enum class GLState
 {
     Blend = 0,                  // GL_BLEND
     CullFace,                   // GL_CULL_FACE
+    DebugOutput,                // GL_DEBUG_OUTPUT
+    DebugOutputSynchronous,     // GL_DEBUG_OUTPUT_SYNCHRONOUS
     DepthTest,                  // GL_DEPTH_TEST
     Dither,                     // GL_DITHER
     PolygonOffsetFill,          // GL_POLYGON_OFFSET_FILL
@@ -36,12 +39,10 @@ enum class GLState
     ScissorTest,                // GL_SCISSOR_TEST
     StencilTest,                // GL_STENCIL_TEST
 
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL
 
     ColorLogicOp,               // GL_COLOR_LOGIC_OP
     DepthClamp,                 // GL_DEPTH_CLAMP
-    DebugOutput,                // GL_DEBUG_OUTPUT
-    DebugOutputSynchronous,     // GL_DEBUG_OUTPUT_SYNCHRONOUS
     FramebufferSRGB,            // GL_FRAMEBUFFER_SRGB
     LineSmooth,                 // GL_LINE_SMOOTH
     Multisample,                // GL_MULTISAMPLE
@@ -147,15 +148,16 @@ struct GLScissor
 
 struct GLRenderState
 {
-    GLenum                  drawMode            = GL_TRIANGLES;
-    GLenum                  primitiveMode       = GL_TRIANGLES;
-    GLenum                  indexBufferDataType = GL_UNSIGNED_INT;
-    GLsizeiptr              indexBufferStride   = 4;
-    GLsizeiptr              indexBufferOffset   = 0;
-    const GLPipelineLayout* boundPipelineLayout = nullptr;
-    const GLPipelineState*  boundPipelineState  = nullptr;
-    GLbitfield              activeBarriers      = 0;
-    GLbitfield              dirtyBarriers       = 0;
+    GLenum                  drawMode                = GL_TRIANGLES;
+    GLenum                  primitiveMode           = GL_TRIANGLES;
+    GLenum                  indexBufferDataType     = GL_UNSIGNED_INT;
+    GLsizeiptr              indexBufferStride       = 4;
+    GLsizeiptr              indexBufferOffset       = 0;
+    const GLPipelineLayout* boundPipelineLayout     = nullptr;
+    const GLPipelineState*  boundPipelineState      = nullptr;
+    GLBufferWithXFB*        boundBufferWithFxb      = nullptr;
+    GLbitfield              activeBarriers          = 0;
+    GLbitfield              dirtyBarriers           = 0;
 };
 
 struct GLPixelStore

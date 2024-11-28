@@ -53,7 +53,6 @@ int main(int argc, char* argv[])
     LLGLWindow window = LLGL_GET_AS(LLGLWindow, surface);
 
     llglSetWindowTitle(window, L"LLGL C99 Example: Hello Triangle");
-    llglShowWindow(window, true);
 
     // Vertex data structure
     typedef struct Vertex
@@ -76,8 +75,8 @@ int main(int argc, char* argv[])
     // Vertex format with 2D floating-point vector for position and 4D byte vector for color
     LLGLVertexAttribute vertexAttributes[2] =
     {
-        { .name = "position", .format = LLGLFormatRG32Float,  .location = 0, .offset = 0,                       .stride = sizeof(Vertex) },
-        { .name = "color",    .format = LLGLFormatRGBA8UNorm, .location = 1, .offset = offsetof(Vertex, color), .stride = sizeof(Vertex) },
+        { .name = "position", .format = LLGLFormatRG32Float,  .location = 0, .offset = offsetof(Vertex, position), .stride = sizeof(Vertex) },
+        { .name = "color",    .format = LLGLFormatRGBA8UNorm, .location = 1, .offset = offsetof(Vertex, color   ), .stride = sizeof(Vertex) },
     };
 
     // Create vertex buffer
@@ -164,7 +163,7 @@ int main(int argc, char* argv[])
     };
 
     // Enter main loop
-    while (llglProcessSurfaceEvents(surface) && !llglHasWindowQuit(window))
+    while (llglProcessSurfaceEvents() && !llglHasWindowQuit(window))
     {
         // Begin recording commands
         llglBegin(cmdBuffer);

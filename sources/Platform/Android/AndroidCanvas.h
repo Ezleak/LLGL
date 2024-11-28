@@ -10,7 +10,10 @@
 
 
 #include <LLGL/Canvas.h>
+#include <android/input.h>
 #include <android/native_activity.h>
+#include <android_native_app_glue.h>
+#include <cstdint>
 
 
 namespace LLGL
@@ -22,17 +25,18 @@ class AndroidCanvas : public Canvas
 
     public:
 
+        #include <LLGL/Backend/Canvas.inl>
+
+    public:
+
         AndroidCanvas(const CanvasDescriptor& desc);
         ~AndroidCanvas();
 
-        bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
-
-        Extent2D GetContentSize() const override;
-
-        void SetTitle(const UTF8String& title) override;
-        UTF8String GetTitle() const override;
-
-        void ResetPixelFormat() override;
+        /*
+        Updates the pointer to ANativeWindow from the specified app state.
+        If the input is null, the window will be reset to null.
+        */
+        void UpdateNativeWindow(android_app* app);
 
     private:
 

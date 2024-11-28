@@ -5,9 +5,9 @@
 # Licensed under the terms of the BSD 3-Clause license (see LICENSE.txt).
 #
 
-# Originally authored on 09/07/2015
-
-cmake_minimum_required(VERSION 3.7)
+if (NOT DEFINED CMAKE_MINIMUM_REQUIRED_VERSION)
+    cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+endif()
 
 project(LLGL_Metal)
 
@@ -49,7 +49,7 @@ source_group("Metal\\Buffer"            FILES ${FilesRendererMTBuffer})
 source_group("Metal\\Command"           FILES ${FilesRendererMTCommand})
 source_group("Metal\\RenderState"       FILES ${FilesRendererMTRenderState})
 source_group("Metal\\Shader"            FILES ${FilesRendererMTShader})
-source_group("Metal\\Shader\\Bulitin"   FILES ${FilesRendererMTShaderBuiltin})
+source_group("Metal\\Shader\\Builtin"   FILES ${FilesRendererMTShaderBuiltin})
 source_group("Metal\\Texture"           FILES ${FilesRendererMTTexture})
 source_group("Include\\Platform"        FILES ${FilesIncludeMT})
 

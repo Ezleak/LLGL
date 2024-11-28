@@ -7,15 +7,17 @@
 
 #include "../ModuleInterface.h"
 #include "GLRenderSystem.h"
-#include "GLProfile.h"
+#include "Profile/GLProfile.h"
 
 
 namespace LLGL
 {
 
 
-#ifdef LLGL_OPENGLES3
+#if defined(LLGL_OPENGLES3)
 #   define ModuleOpenGL ModuleOpenGLES3
+#elif defined(LLGL_WEBGL)
+#   define ModuleOpenGL ModuleWebGL
 #endif
 
 namespace ModuleOpenGL

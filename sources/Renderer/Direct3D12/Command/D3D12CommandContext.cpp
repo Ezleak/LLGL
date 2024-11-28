@@ -9,7 +9,10 @@
 #include "D3D12CommandQueue.h"
 #include "../D3D12Device.h"
 #include "../D3D12Resource.h"
+#include "../Buffer/D3D12Buffer.h"
+#include "../Texture/D3D12Texture.h"
 #include "../RenderState/D3D12Fence.h"
+#include "../../CheckedCast.h"
 #include "../../DXCommon/DXCore.h"
 #include "../../../Core/Assertion.h"
 #include <LLGL/Utils/ForRange.h>
@@ -26,6 +29,10 @@ static constexpr D3D12_DESCRIPTOR_HEAP_TYPE g_descriptorHeapTypes[] =
     D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
     D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
 };
+
+constexpr UINT D3D12CommandContext::maxNumAllocators;
+constexpr UINT D3D12CommandContext::maxNumResourceBarrieres;
+constexpr UINT D3D12CommandContext::maxNumDescriptorHeaps;
 
 D3D12CommandContext::D3D12CommandContext()
 {
@@ -147,7 +154,7 @@ void D3D12CommandContext::FinishAndSync(D3D12CommandQueue& commandQueue)
     commandQueue.WaitIdle();
 }
 
-void D3D12CommandContext::TransitionResource(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, bool flushImmediate)
+void D3D12CommandContext::TransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, UINT subresource, bool flushImmediate)
 {
     D3D12_RESOURCE_BARRIER& barrier = NextResourceBarrier();
 
@@ -155,13 +162,18 @@ void D3D12CommandContext::TransitionResource(ID3D12Resource* resource, D3D12_RES
     barrier.Type                    = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Flags                   = D3D12_RESOURCE_BARRIER_FLAG_NONE;
     barrier.Transition.pResource    = resource;
-    barrier.Transition.Subresource  = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.Subresource  = subresource;
     barrier.Transition.StateBefore  = oldState;
     barrier.Transition.StateAfter   = newState;
 
     /* Flush resource barrieres if required */
     if (flushImmediate)
         FlushResourceBarrieres();
+}
+
+void D3D12CommandContext::TransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES newState, D3D12_RESOURCE_STATES oldState, bool flushImmediate)
+{
+    TransitionBarrier(resource, newState, oldState, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, flushImmediate);
 }
 
 void D3D12CommandContext::TransitionResource(D3D12Resource& resource, D3D12_RESOURCE_STATES newState, bool flushImmediate)
@@ -187,13 +199,36 @@ void D3D12CommandContext::TransitionResource(D3D12Resource& resource, D3D12_RESO
         FlushResourceBarrieres();
 }
 
-void D3D12CommandContext::InsertUAVBarrier(D3D12Resource& resource, bool flushImmediate)
+void D3D12CommandContext::TransitionGenericResource(Resource& resource, D3D12_RESOURCE_STATES newState, bool flushImmediate)
+{
+    switch (resource.GetResourceType())
+    {
+        case ResourceType::Buffer:
+        {
+            auto& bufferD3D = LLGL_CAST(D3D12Buffer&, resource);
+            TransitionResource(bufferD3D.GetResource(), newState, flushImmediate);
+        }
+        break;
+
+        case ResourceType::Texture:
+        {
+            auto& textureD3D = LLGL_CAST(D3D12Texture&, resource);
+            TransitionResource(textureD3D.GetResource(), newState, flushImmediate);
+        }
+        break;
+
+        default:
+        break;
+    }
+}
+
+void D3D12CommandContext::UAVBarrier(ID3D12Resource* resource, bool flushImmediate)
 {
     D3D12_RESOURCE_BARRIER& barrier = NextResourceBarrier();
 
     barrier.Type            = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     barrier.Flags           = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    barrier.UAV.pResource   = resource.native.Get();
+    barrier.UAV.pResource   = resource;
 
     if (flushImmediate)
         FlushResourceBarrieres();
@@ -368,19 +403,25 @@ void D3D12CommandContext::PrepareStagingDescriptorHeaps(
     stagingDescriptorSetLayout_ = layout;
     stagingDescriptorIndices_   = indices;
 
-    /* Bind shader-visible descriptor heaps */
-    ID3D12DescriptorHeap* const stagingDescriptorHeaps[2] =
+    if (stagingDescriptorSetLayout_.numHeapResourceViews > 0 ||
+        stagingDescriptorSetLayout_.numHeapSamplers      > 0 ||
+        stagingDescriptorSetLayout_.numResourceViews     > 0 ||
+        stagingDescriptorSetLayout_.numSamplers          > 0)
     {
-        stagingDescriptorPools_[currentAllocatorIndex_][0].GetDescriptorHeap(),
-        stagingDescriptorPools_[currentAllocatorIndex_][1].GetDescriptorHeap()
-    };
-    SetDescriptorHeaps(2, stagingDescriptorHeaps);
+        /* Bind shader-visible descriptor heaps */
+        ID3D12DescriptorHeap* const stagingDescriptorHeaps[2] =
+        {
+            stagingDescriptorPools_[currentAllocatorIndex_][0].GetDescriptorHeap(),
+            stagingDescriptorPools_[currentAllocatorIndex_][1].GetDescriptorHeap()
+        };
+        SetDescriptorHeaps(2, stagingDescriptorHeaps);
 
-    /* Reset descriptor cache for dynamic descriptors */
-    descriptorCaches_[currentAllocatorIndex_].Reset(
-        stagingDescriptorSetLayout_.numResourceViews,
-        stagingDescriptorSetLayout_.numSamplers
-    );
+        /* Reset descriptor cache for dynamic descriptors */
+        descriptorCaches_[currentAllocatorIndex_].Reset(
+            stagingDescriptorSetLayout_.numResourceViews,
+            stagingDescriptorSetLayout_.numSamplers
+        );
+    }
 }
 
 void D3D12CommandContext::SetGraphicsConstant(UINT parameterIndex, D3D12Constant value, UINT offset)
@@ -475,6 +516,7 @@ void D3D12CommandContext::DrawInstanced(
     UINT startVertexLocation,
     UINT startInstanceLocation)
 {
+    FlushResourceBarrieres();
     FlushDeferredPipelineState();
     FlushGraphicsStagingDescriptorTables();
     commandList_->DrawInstanced(vertexCountPerInstance, instanceCount, startVertexLocation, startInstanceLocation);
@@ -487,6 +529,7 @@ void D3D12CommandContext::DrawIndexedInstanced(
     INT     baseVertexLocation,
     UINT    startInstanceLocation)
 {
+    FlushResourceBarrieres();
     FlushDeferredPipelineState();
     FlushGraphicsStagingDescriptorTables();
     commandList_->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndexLocation, baseVertexLocation, startInstanceLocation);
@@ -500,6 +543,7 @@ void D3D12CommandContext::DrawIndirect(
     ID3D12Resource*         countBuffer,
     UINT64                  countBufferOffset)
 {
+    FlushResourceBarrieres();
     FlushDeferredPipelineState();
     FlushGraphicsStagingDescriptorTables();
     commandList_->ExecuteIndirect(commandSignature, maxCommandCount, argumentBuffer, argumentBufferOffset, countBuffer, countBufferOffset);
@@ -510,6 +554,7 @@ void D3D12CommandContext::Dispatch(
     UINT threadGroupCountY,
     UINT threadGroupCountZ)
 {
+    FlushResourceBarrieres();
     FlushComputeStagingDescriptorTables();
     commandList_->Dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
 }
@@ -522,6 +567,7 @@ void D3D12CommandContext::DispatchIndirect(
     ID3D12Resource*         countBuffer,
     UINT64                  countBufferOffset)
 {
+    FlushResourceBarrieres();
     FlushComputeStagingDescriptorTables();
     commandList_->ExecuteIndirect(commandSignature, maxCommandCount, argumentBuffer, argumentBufferOffset, countBuffer, countBufferOffset);
 }

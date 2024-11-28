@@ -13,6 +13,7 @@
 #include <LLGL/PipelineLayoutFlags.h>
 #include <LLGL/Container/SmallVector.h>
 #include <LLGL/Container/ArrayView.h>
+#include "../Shader/D3D12RootSignature.h"
 #include "../../DXCommon/ComPtr.h"
 #include <d3d12.h>
 #include <memory>
@@ -32,6 +33,7 @@ struct D3D12DescriptorHeapLocation
     D3D12_DESCRIPTOR_RANGE_TYPE type;
     UINT                        heap  :  1; // Descriptor heap index (0 = SBC/SRV/UAV, 1 = Sampler)
     UINT                        index : 31; // Descriptor index within its descriptor heap
+    D3D12_RESOURCE_STATES       state;      // Target resource state
 };
 
 // Resource descriptor to root parameter/ descriptor table range mapping structure.
@@ -39,6 +41,7 @@ struct D3D12DescriptorLocation
 {
     D3D12_ROOT_PARAMETER_TYPE   type;
     UINT                        index; // Root parameter index
+    D3D12_RESOURCE_STATES       state; // Target resource state
 };
 
 // Uniform to root constant mapping structure.
@@ -210,12 +213,12 @@ class D3D12PipelineLayout final : public PipelineLayout
         );
 
         void BuildHeapRootParameterTables(
-            D3D12RootSignature&             rootSignature,
-            D3D12_DESCRIPTOR_RANGE_TYPE     descRangeType,
-            const PipelineLayoutDescriptor& layoutDesc,
-            const ResourceType              resourceType,
-            long                            bindFlags,
-            UINT&                           outCounter
+            D3D12RootSignature&                 rootSignature,
+            D3D12_DESCRIPTOR_RANGE_TYPE         descRangeType,
+            const ArrayView<BindingDescriptor>& bindingDescs,
+            const ResourceType                  resourceType,
+            long                                bindFlags,
+            UINT&                               outCounter
         );
 
         void BuildHeapRootParameterTableEntry(
@@ -227,12 +230,12 @@ class D3D12PipelineLayout final : public PipelineLayout
         );
 
         void BuildRootParameterTables(
-            D3D12RootSignature&             rootSignature,
-            D3D12_DESCRIPTOR_RANGE_TYPE     descRangeType,
-            const PipelineLayoutDescriptor& layoutDesc,
-            const ResourceType              resourceType,
-            long                            bindFlags,
-            UINT&                           outCounter
+            D3D12RootSignature&                 rootSignature,
+            D3D12_DESCRIPTOR_RANGE_TYPE         descRangeType,
+            const ArrayView<BindingDescriptor>& bindingDescs,
+            const ResourceType                  resourceType,
+            long                                bindFlags,
+            UINT&                               outCounter
         );
 
         void BuildRootParameterTableEntry(
@@ -244,11 +247,11 @@ class D3D12PipelineLayout final : public PipelineLayout
         );
 
         void BuildRootParameters(
-            D3D12RootSignature&             rootSignature,
-            D3D12_ROOT_PARAMETER_TYPE       rootParamType,
-            const PipelineLayoutDescriptor& layoutDesc,
-            const ResourceType              resourceType,
-            long                            bindFlags
+            D3D12RootSignature&                 rootSignature,
+            D3D12_ROOT_PARAMETER_TYPE           rootParamType,
+            const ArrayView<BindingDescriptor>& bindingDescs,
+            const ResourceType                  resourceType,
+            long                                bindFlags
         );
 
         void BuildRootParameter(
@@ -259,9 +262,9 @@ class D3D12PipelineLayout final : public PipelineLayout
         );
 
         void BuildStaticSamplers(
-            D3D12RootSignature&             rootSignature,
-            const PipelineLayoutDescriptor& layoutDesc,
-            UINT&                           outCounter
+            D3D12RootSignature&                         rootSignature,
+            const ArrayView<StaticSamplerDescriptor>&   staticSamplerDescs,
+            UINT&                                       outCounter
         );
 
     private:

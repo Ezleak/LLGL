@@ -11,6 +11,13 @@
 
 #include <LLGL-C/LLGL.h>
 #include <stdbool.h>
+#include <stdio.h> // fprintf()
+#include "FileUtils.h"
+
+#if defined(ANDROID) || defined(__ANDROID__)
+#   include <android_native_app_glue.h>
+#   define LLGLEXAMPLE_MOBILE 1
+#endif
 
 
 /*
@@ -22,9 +29,52 @@
 #define ARRAY_SIZE(A)   (sizeof(A)/sizeof((A)[0]))
 
 
+#if defined(ANDROID) || defined(__ANDROID__)
+
+#define IMPLEMENT_EXAMPLE_MAIN(INIT, LOOP)          \
+    void android_main(struct android_app* state)    \
+    {                                               \
+        ExampleArgs args = { state };               \
+        (void)example_main(INIT, LOOP, &args);      \
+    }
+
+#else
+
+#define IMPLEMENT_EXAMPLE_MAIN(INIT, LOOP)      \
+    int main(int argc, char* argv[])            \
+    {                                           \
+        ExampleArgs args = { argc, argv };      \
+        return example_main(INIT, LOOP, &args); \
+    }
+
+#endif
+
+
 /*
  * Structures
  */
+
+typedef struct ExampleArgs
+{
+#if __ANDROID__
+    struct android_app* androidApp;
+#else
+    int                 argc;
+    char**              argv;
+#endif
+}
+ExampleArgs;
+
+typedef struct ExampleConfig
+{
+    LLGLRenderSystemDescriptor  rendererDesc;
+    uint32_t                    resolution[2];
+    uint32_t                    samples;
+    bool                        vsync;
+    bool                        debugger;
+    bool                        noDepthStencil;
+}
+ExampleConfig;
 
 typedef struct TexturedVertex
 {
@@ -86,22 +136,30 @@ extern LLGLViewport         g_viewport;
 // Primary camera projection
 extern float                g_projection[4][4];
 
+// Render system configuraiton.
+extern ExampleConfig        g_config;
+
+// Android app glue structure. Only available on Android platform.
+#if defined(ANDROID) || defined(__ANDROID__)
+extern struct android_app*  g_androidApp;
+#endif
+
 
 /*
  * Global functions
  */
 
 // Initializes the example with the specified title and returns a non-zero error code if initialization failed.
-int example_init(const wchar_t* title);
+int example_init(const char* title);
 
-// Releases all example resources.
-void example_release();
-
-// Processes all surface events, polls the event list (See mouse_movement_x() etc.) and returns false if the window was closed.
-bool example_poll_events();
+// Runs the main loop.
+int example_main(int (*pfnInit)(), void (*pfnLoop)(double dt), const ExampleArgs* args);
 
 // Builds a perspective projection matrix.
 void perspective_projection(float outProjection[4][4], float aspectRatio, float nearPlane, float farPlane, float fieldOfView);
+
+// Builds an orthogonal projection matrix.
+void orthogonal_projection(float outProjection[4][4], float width, float height, float nearPlane, float farPlane);
 
 // Returns the pointers the vertex and index data of a textured cube.
 void get_textured_cube(const TexturedVertex** outVertices, size_t* outVertexCount, const uint32_t** outIndices, size_t* outIndexCount);
@@ -120,6 +178,9 @@ void matrix_rotate(float outMatrix[4][4], float x, float y, float z, float angle
 
 // Returns true if the specified key is currently pressed down.
 bool key_pressed(LLGLKey keyCode);
+
+// Returns true if the speciifed key was pushed down. Only true during one frame until the key is released again.
+bool key_pushed(LLGLKey keyCode);
 
 // Returns the mouse movement on the X-axis.
 float mouse_movement_x();

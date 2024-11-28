@@ -15,6 +15,7 @@
 #include "../Buffer/MTBufferArray.h"
 #include "../RenderState/MTGraphicsPSO.h"
 #include "../RenderState/MTComputePSO.h"
+#include "../RenderState/MTQueryHeap.h"
 #include "../RenderState/MTResourceHeap.h"
 #include "../RenderState/MTBuiltinPSOFactory.h"
 #include "../RenderState/MTDescriptorCache.h"
@@ -536,7 +537,7 @@ void MTDirectCommandBuffer::Clear(long flags, const ClearValue& clearValue)
     [renderPassDesc release];
 }
 
-// Fills the MTLRenderPassDescriptor object according to the secified attachment clear command
+// Fills the MTLRenderPassDescriptor object according to the specified attachment clear command
 static void FillMTRenderPassDesc(MTLRenderPassDescriptor* renderPassDesc, const AttachmentClear& attachment)
 {
     if ((attachment.flags & ClearFlags::Color) != 0)
@@ -616,12 +617,21 @@ void MTDirectCommandBuffer::SetUniforms(std::uint32_t first, const void* data, s
 
 void MTDirectCommandBuffer::BeginQuery(QueryHeap& queryHeap, std::uint32_t query)
 {
-    //todo
+    auto& queryHeapMT = LLGL_CAST(MTQueryHeap&, queryHeap);
+    const MTLVisibilityResultMode mode = queryHeapMT.GetVisibilityResultMode();
+    if (mode != MTLVisibilityResultModeDisabled && query < queryHeapMT.GetNumQueries())
+    {
+        const NSUInteger offset = queryHeapMT.GetStride() * query;
+        context_.SetVisibilityBuffer(queryHeapMT.GetNative(), queryHeapMT.GetVisibilityResultMode(), offset);
+    }
 }
 
 void MTDirectCommandBuffer::EndQuery(QueryHeap& queryHeap, std::uint32_t query)
 {
-    //todo
+    auto& queryHeapMT = LLGL_CAST(MTQueryHeap&, queryHeap);
+    const MTLVisibilityResultMode mode = queryHeapMT.GetVisibilityResultMode();
+    if (mode != MTLVisibilityResultModeDisabled && query < queryHeapMT.GetNumQueries())
+        context_.SetVisibilityBuffer(nil, MTLVisibilityResultModeDisabled, 0);
 }
 
 void MTDirectCommandBuffer::BeginRenderCondition(QueryHeap& queryHeap, std::uint32_t query, const RenderConditionMode mode)
@@ -719,7 +729,33 @@ void MTDirectCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t 
 
 void MTDirectCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances)
 {
-    MTDirectCommandBuffer::DrawInstanced(numVertices, firstVertex, numInstances, /*firstInstance:*/ 0);
+    const NSUInteger numPatchControlPoints = context_.GetNumPatchControlPoints();
+    if (numPatchControlPoints > 0)
+    {
+        const NSUInteger firstPatch = (static_cast<NSUInteger>(firstVertex) / numPatchControlPoints);
+        const NSUInteger numPatches = (static_cast<NSUInteger>(numVertices) / numPatchControlPoints);
+
+        auto renderEncoder = context_.DispatchTessellationAndGetRenderEncoder(numPatches, numInstances);
+        [renderEncoder
+            drawPatches:            numPatchControlPoints
+            patchStart:             firstPatch
+            patchCount:             numPatches
+            patchIndexBuffer:       nil
+            patchIndexBufferOffset: 0
+            instanceCount:          static_cast<NSUInteger>(numInstances)
+            baseInstance:           0
+        ];
+    }
+    else
+    {
+        auto renderEncoder = context_.FlushAndGetRenderEncoder();
+        [renderEncoder
+            drawPrimitives: context_.GetPrimitiveType()
+            vertexStart:    static_cast<NSUInteger>(firstVertex)
+            vertexCount:    static_cast<NSUInteger>(numVertices)
+            instanceCount:  static_cast<NSUInteger>(numInstances)
+        ];
+    }
 }
 
 void MTDirectCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance)
@@ -951,6 +987,11 @@ void MTDirectCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t of
             offset += stride;
         }
     }
+}
+
+void MTDirectCommandBuffer::DrawStreamOutput()
+{
+    LLGL_TRAP("stream-outputs not supported");
 }
 
 /* ----- Compute ----- */

@@ -18,6 +18,13 @@ namespace LLGL
 {
 
 
+constexpr GLuint GLContextState::numTextureLayers;
+constexpr GLuint GLContextState::numImageUnits;
+constexpr GLuint GLContextState::numCaps;
+constexpr GLuint GLContextState::numBufferTargets;
+constexpr GLuint GLContextState::numFboTargets;
+constexpr GLuint GLContextState::numTextureTargets;
+
 static void GLGetValue(GLenum pname, GLint& params)
 {
     glGetIntegerv(pname, &params);
@@ -76,8 +83,8 @@ static const GLenum g_bufferTargetBindings[] =
     0,
     #endif
 
-    #ifdef GL_DISPATCH_INDIRECT_BUFFER
-    GL_DISPATCH_INDIRECT_BUFFER,
+    #ifdef GL_DISPATCH_INDIRECT_BUFFER_BINDING
+    GL_DISPATCH_INDIRECT_BUFFER_BINDING,
     #else
     0,
     #endif
@@ -219,7 +226,7 @@ static_assert(
 LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
 {
     // Rasterizer state
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL
     GLint polygonModes[2] = {};
     GLGetValue(GL_POLYGON_MODE, polygonModes);
     outContextState.polygonMode = polygonModes[0];
@@ -228,7 +235,7 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
     GLGetValue(GL_POLYGON_OFFSET_FACTOR,    outContextState.offsetFactor);
     GLGetValue(GL_POLYGON_OFFSET_UNITS,     outContextState.offsetUnits);
 
-    #ifdef GL_ARB_polygon_offset_clamp
+    #if LLGL_GLEXT_POLYGON_OFFSET_CLAMP
     if (HasExtension(GLExt::ARB_polygon_offset_clamp))
         GLGetValue(GL_POLYGON_OFFSET_CLAMP, outContextState.offsetClamp);
     #endif
@@ -236,7 +243,7 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
     GLGetValue(GL_CULL_FACE_MODE,           outContextState.cullFace);
     GLGetValue(GL_FRONT_FACE,               outContextState.frontFace);
 
-    #ifdef LLGL_GLEXT_TESSELLATION_SHADER
+    #if LLGL_GLEXT_TESSELLATION_SHADER
     if (HasExtension(GLExt::ARB_tessellation_shader))
         GLGetValue(GL_PATCH_VERTICES,       outContextState.patchVertices);
     #endif
@@ -249,15 +256,15 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
 
     // Blend state
     GLGetValue(GL_BLEND_COLOR,              outContextState.blendColor);
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL
     GLGetValue(GL_LOGIC_OP_MODE,            outContextState.logicOpCode);
     #endif
-    #ifdef LLGL_PRIMITIVE_RESTART
+    #if LLGL_PRIMITIVE_RESTART
     GLGetValue(GL_PRIMITIVE_RESTART_INDEX,  outContextState.primitiveRestartIndex);
     #endif
 
     // Clip control
-    #ifdef LLGL_GLEXT_CLIP_CONTROL
+    #if LLGL_GLEXT_CLIP_CONTROL
     if (HasExtension(GLExt::ARB_clip_control))
     {
         GLGetValue(GL_CLIP_ORIGIN,      outContextState.clipOrigin);
@@ -267,13 +274,16 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
 
     // Capabilities
     for_range(i, GLContextState::numCaps)
-        outContextState.capabilities[i] = (glIsEnabled(GLStateManager::GetGLCapability(static_cast<GLState>(i))) != GL_FALSE);
+    {
+        const GLenum cap = GLStateManager::GetGLCapability(static_cast<GLState>(i));
+        outContextState.capabilities[i] = (cap != 0 && glIsEnabled(cap) != GL_FALSE);
+    }
 
     #ifdef LLGL_GL_ENABLE_VENDOR_EXT
     for_range(i, GLContextState::numCapsExt)
     {
-        if (outContextState.capabilitiesExt[i].cap != 0)
-            outContextState.capabilitiesExt[i].enabled = (glIsEnabled(outContextState.capabilitiesExt[i].cap) != GL_FALSE);
+        const GLenum cap = outContextState.capabilitiesExt[i].cap;
+        outContextState.capabilitiesExt[i].enabled = (cap != 0 && glIsEnabled(cap) != GL_FALSE);
     }
     #endif // /LLGL_GL_ENABLE_VENDOR_EXT
 
@@ -295,6 +305,8 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
             GLGetValue(g_bufferTargetBindings[target], outContextState.boundBuffers[target]);
     }
 
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     // Framebuffer Objects (FBO)
     GLGetValue(GL_DRAW_FRAMEBUFFER_BINDING, outContextState.boundFramebuffers[static_cast<int>(GLFramebufferTarget::DrawFramebuffer)]);
     GLGetValue(GL_READ_FRAMEBUFFER_BINDING, outContextState.boundFramebuffers[static_cast<int>(GLFramebufferTarget::ReadFramebuffer)]);
@@ -302,6 +314,8 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
 
     // Renerbuffer Objects (RBO)
     GLGetValue(GL_RENDERBUFFER_BINDING, outContextState.boundRenderbuffer);
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 
     // Textures and samplers
     GLenum initialActiveTexture = GL_TEXTURE0;
@@ -312,7 +326,9 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
         const GLenum currentActiveTexture = GLStateManager::ToGLTextureLayer(layer);
         glActiveTexture(currentActiveTexture);
 
+        #if LLGL_GLEXT_SAMPLER_OBJECTS
         GLGetValue(GL_SAMPLER_BINDING, outContextState.boundSamplers[layer]);
+        #endif
 
         for_range(target, GLContextState::numTextureTargets)
         {
@@ -327,7 +343,9 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
     glActiveTexture(initialActiveTexture);
 
     // Vertex Array Objects (VAO)
+    #if LLGL_GLEXT_VERTEX_ARRAY_OBJECT
     GLGetValue(GL_VERTEX_ARRAY_BINDING, outContextState.boundVertexArray);
+    #endif
     outContextState.boundElementArrayBuffer = outContextState.boundBuffers[static_cast<int>(GLBufferTarget::ElementArrayBuffer)]; //TODO: remove this redundancy
 
     // Programs
@@ -336,9 +354,14 @@ LLGL_EXPORT void GLGetContextState(GLContextState& outContextState)
         GLGetValue(GL_CURRENT_PROGRAM, outContextState.boundProgram);
     #endif
 
-    #ifdef GL_ARB_separate_shader_objects
+    #if LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
     if (HasExtension(GLExt::ARB_separate_shader_objects))
         GLGetValue(GL_PROGRAM_PIPELINE_BINDING, outContextState.boundProgramPipeline);
+    #endif
+
+    #if LLGL_GLEXT_TRNASFORM_FEEDBACK2
+    if (HasExtension(GLExt::ARB_transform_feedback2))
+        GLGetValue(GL_TRANSFORM_FEEDBACK_BUFFER_BINDING, outContextState.boundTransformFeedback);
     #endif
 };
 
@@ -350,7 +373,7 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
     glPolygonMode(GL_FRONT_AND_BACK, inContextState.polygonMode);
     #endif
 
-    #ifdef GL_ARB_polygon_offset_clamp
+    #if LLGL_GLEXT_POLYGON_OFFSET_CLAMP
     if (HasExtension(GLExt::ARB_polygon_offset_clamp))
     {
         glPolygonOffsetClamp(
@@ -371,7 +394,7 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
     glCullFace(inContextState.cullFace);
     glFrontFace(inContextState.frontFace);
 
-    #ifdef LLGL_GLEXT_TESSELLATION_SHADER
+    #if LLGL_GLEXT_TESSELLATION_SHADER
     if (HasExtension(GLExt::ARB_tessellation_shader))
         glPatchParameteri(GL_PATCH_VERTICES, inContextState.patchVertices);
     #endif
@@ -390,16 +413,16 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
         inContextState.blendColor[3]
     );
 
-    #ifdef LLGL_OPENGL
+    #if LLGL_OPENGL
     glLogicOp(inContextState.logicOpCode);
     #endif
 
-    #ifdef LLGL_PRIMITIVE_RESTART
+    #if LLGL_PRIMITIVE_RESTART
     glPrimitiveRestartIndex(inContextState.primitiveRestartIndex);
     #endif
 
     // Clip control
-    #ifdef LLGL_GLEXT_CLIP_CONTROL
+    #if LLGL_GLEXT_CLIP_CONTROL
     if (HasExtension(GLExt::ARB_clip_control))
     {
         glClipControl(
@@ -413,18 +436,21 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
     for_range(i, GLContextState::numCaps)
     {
         const GLenum cap = GLStateManager::GetGLCapability(static_cast<GLState>(i));
-        if (inContextState.capabilities[i])
-            glEnable(cap);
-        else
-            glDisable(cap);
+        if (cap != 0)
+        {
+            if (inContextState.capabilities[i])
+                glEnable(cap);
+            else
+                glDisable(cap);
+        }
     }
 
     #ifdef LLGL_GL_ENABLE_VENDOR_EXT
     for_range(i, GLContextState::numCapsExt)
     {
-        if (inContextState.capabilitiesExt[i].cap != 0)
+        const GLenum cap = inContextState.capabilitiesExt[i].cap;
+        if (cap != 0)
         {
-            const GLenum cap = inContextState.capabilitiesExt[i].cap;
             if (inContextState.capabilitiesExt[i].enabled)
                 glEnable(cap);
             else
@@ -451,12 +477,16 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
             glBindBuffer(GLStateManager::ToGLBufferTarget(static_cast<GLBufferTarget>(target)), inContextState.boundBuffers[target]);
     }
 
+    #if !LLGL_GL_ENABLE_OPENGL2X
+
     // Framebuffer Objects (FBO)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, inContextState.boundFramebuffers[static_cast<int>(GLFramebufferTarget::DrawFramebuffer)]);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, inContextState.boundFramebuffers[static_cast<int>(GLFramebufferTarget::ReadFramebuffer)]);
 
     // Renerbuffer Objects (RBO)
     glBindRenderbuffer(GL_RENDERBUFFER_BINDING, inContextState.boundRenderbuffer);
+
+    #endif // /!LLGL_GL_ENABLE_OPENGL2X
 
     // Textures and samplers
     GLenum initialActiveTexture = GL_TEXTURE0;
@@ -467,7 +497,9 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
         const GLenum currentActiveTexture = GLStateManager::ToGLTextureLayer(layer);
         glActiveTexture(currentActiveTexture);
 
+        #if LLGL_GLEXT_SAMPLER_OBJECTS
         glBindSampler(layer, inContextState.boundSamplers[layer]);
+        #endif
 
         for_range(target, GLContextState::numTextureTargets)
         {
@@ -481,7 +513,9 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
     glActiveTexture(initialActiveTexture);
 
     // Vertex Array Objects (VAO)
+    #if LLGL_GLEXT_VERTEX_ARRAY_OBJECT
     glBindVertexArray(inContextState.boundVertexArray);
+    #endif
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, inContextState.boundElementArrayBuffer);
 
     // Programs
@@ -490,9 +524,14 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
         glUseProgram(inContextState.boundProgram);
     #endif
 
-    #ifdef GL_ARB_separate_shader_objects
+    #if LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
     if (HasExtension(GLExt::ARB_separate_shader_objects))
         glBindProgramPipeline(inContextState.boundProgramPipeline);
+    #endif
+
+    #if LLGL_GLEXT_TRNASFORM_FEEDBACK2
+    if (HasExtension(GLExt::ARB_transform_feedback2))
+        glBindTransformFeedback(GL_TRANSFORM_FEEDBACK, inContextState.boundTransformFeedback);
     #endif
 }
 

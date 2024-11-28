@@ -11,6 +11,10 @@
 #include <string>
 
 
+/*
+Ensure shaders with syntax and/or semantic errors are reported correctly and don't crash the PSO creation.
+Erroneous PSOs must report their failure in the LLGL::Report object.
+*/
 DEF_TEST( ShaderErrors )
 {
     TestResult result = TestResult::Passed;
@@ -69,7 +73,7 @@ DEF_TEST( ShaderErrors )
             }
         };
 
-        const std::string shaderPath = "Shaders/";
+        const std::string shaderPath = "Shaders/SemanticErrors/";
 
         std::string shaderFilename = name;
         Shader* shader = nullptr;

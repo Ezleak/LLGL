@@ -6,7 +6,7 @@
  */
 
 #include "GLRenderSystem.h"
-#include "GLProfile.h"
+#include "Profile/GLProfile.h"
 #include "Texture/GLMipGenerator.h"
 #include "Texture/GLTextureViewPool.h"
 #include "Texture/GLFramebufferCapture.h"
@@ -18,14 +18,17 @@
 #include "GLCore.h"
 #include "Shader/GLLegacyShader.h"
 #include "Buffer/GLBufferWithVAO.h"
+#include "Buffer/GLBufferWithXFB.h"
 #include "Buffer/GLBufferArrayWithVAO.h"
 #include "../CheckedCast.h"
 #include "../BufferUtils.h"
 #include "../TextureUtils.h"
+#include "../RenderTargetUtils.h"
 #include "../../Core/CoreUtils.h"
 #include "../../Core/Assertion.h"
 #include "../../Platform/Debug.h"
 #include "GLRenderingCaps.h"
+#include "Ext/GLExtensionLoader.h"
 #include "Command/GLImmediateCommandBuffer.h"
 #include "Command/GLDeferredCommandBuffer.h"
 #include "RenderState/GLGraphicsPSO.h"
@@ -45,15 +48,24 @@ namespace LLGL
 
 static RendererConfigurationOpenGL GetGLProfileFromDesc(const RenderSystemDescriptor& renderSystemDesc)
 {
-    if (auto rendererConfigGL = GetRendererConfiguration<RendererConfigurationOpenGL>(renderSystemDesc))
+    if (auto* rendererConfigGL = GetRendererConfiguration<RendererConfigurationOpenGL>(renderSystemDesc))
         return *rendererConfigGL;
     else
         return RendererConfigurationOpenGL{};
 }
 
 GLRenderSystem::GLRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
-    contextMngr_  { GetGLProfileFromDesc(renderSystemDesc), renderSystemDesc.nativeHandle, renderSystemDesc.nativeHandleSize },
-    debugContext_ { ((renderSystemDesc.flags & RenderSystemFlags::DebugDevice) != 0)                                         }
+    contextMngr_
+    {
+        GetGLProfileFromDesc(renderSystemDesc),
+        std::bind(&GLRenderSystem::RegisterNewGLContext, this, std::placeholders::_1, std::placeholders::_2),
+        renderSystemDesc.nativeHandle,
+        renderSystemDesc.nativeHandleSize
+    },
+    debugContext_
+    {
+        ((renderSystemDesc.flags & RenderSystemFlags::DebugDevice) != 0)
+    }
 {
 }
 
@@ -70,14 +82,7 @@ GLRenderSystem::~GLRenderSystem()
 
 SwapChain* GLRenderSystem::CreateSwapChain(const SwapChainDescriptor& swapChainDesc, const std::shared_ptr<Surface>& surface)
 {
-    const bool isFirstSwapChain = swapChains_.empty();
-    auto* swapChainGL = swapChains_.emplace<GLSwapChain>(swapChainDesc, surface, contextMngr_);
-
-    /* Create devices that require an active GL context */
-    if (isFirstSwapChain)
-        CreateGLContextDependentDevices(swapChainGL->GetStateManager());
-
-    return swapChainGL;
+    return swapChains_.emplace<GLSwapChain>(*this, swapChainDesc, surface, contextMngr_);
 }
 
 void GLRenderSystem::Release(SwapChain& swapChain)
@@ -89,24 +94,19 @@ void GLRenderSystem::Release(SwapChain& swapChain)
 
 CommandQueue* GLRenderSystem::GetCommandQueue()
 {
-    return commandQueue_.get();
+    return &commandQueue_;
 }
 
 /* ----- Command buffers ----- */
 
 CommandBuffer* GLRenderSystem::CreateCommandBuffer(const CommandBufferDescriptor& commandBufferDesc)
 {
-    /* Get state manager from swap-chain with shared GL context */
-    if (std::shared_ptr<GLContext> currentGLContext = contextMngr_.AllocContext())
-    {
-        /* Create deferred or immediate command buffer */
-        if ((commandBufferDesc.flags & CommandBufferFlags::ImmediateSubmit) != 0)
-            return commandBuffers_.emplace<GLImmediateCommandBuffer>(currentGLContext->GetStateManager());
-        else
-            return commandBuffers_.emplace<GLDeferredCommandBuffer>(commandBufferDesc.flags);
-    }
+    /* Create deferred or immediate command buffer */
+    CreateGLContextOnce();
+    if ((commandBufferDesc.flags & CommandBufferFlags::ImmediateSubmit) != 0)
+        return commandBuffers_.emplace<GLImmediateCommandBuffer>();
     else
-        LLGL_TRAP("cannot create OpenGL command buffer without active render context");
+        return commandBuffers_.emplace<GLDeferredCommandBuffer>(commandBufferDesc.flags);
 }
 
 void GLRenderSystem::Release(CommandBuffer& commandBuffer)
@@ -118,7 +118,7 @@ void GLRenderSystem::Release(CommandBuffer& commandBuffer)
 
 static GLbitfield GetGLBufferStorageFlags(long cpuAccessFlags)
 {
-    #ifdef GL_ARB_buffer_storage
+    #if GL_ARB_buffer_storage
 
     GLbitfield flagsGL = 0;
 
@@ -156,6 +156,7 @@ static void GLBufferStorage(GLBuffer& bufferGL, const BufferDescriptor& bufferDe
 
 Buffer* GLRenderSystem::CreateBuffer(const BufferDescriptor& bufferDesc, const void* initialData)
 {
+    CreateGLContextOnce();
     RenderSystem::AssertCreateBuffer(bufferDesc, static_cast<std::uint64_t>(std::numeric_limits<GLsizeiptr>::max()));
 
     auto bufferGL = CreateGLBuffer(bufferDesc, initialData);
@@ -170,14 +171,26 @@ Buffer* GLRenderSystem::CreateBuffer(const BufferDescriptor& bufferDesc, const v
 // private
 GLBuffer* GLRenderSystem::CreateGLBuffer(const BufferDescriptor& bufferDesc, const void* initialData)
 {
-    /* Create either base of sub-class GLBuffer object */
+    #if LLGL_GLEXT_TRNASFORM_FEEDBACK2
+    if ((bufferDesc.bindFlags & BindFlags::StreamOutputBuffer) != 0)
+    {
+        /* Create buffer with VAO and transform feedback object */
+        auto* bufferGL = buffers_.emplace<GLBufferWithXFB>(bufferDesc.bindFlags, bufferDesc.debugName);
+        {
+            GLBufferStorage(*bufferGL, bufferDesc, initialData);
+            bufferGL->BuildVertexArray(bufferDesc.vertexAttribs);
+        }
+        return bufferGL;
+    }
+    else
+    #endif // /LLGL_GLEXT_TRNASFORM_FEEDBACK2
     if ((bufferDesc.bindFlags & BindFlags::VertexBuffer) != 0)
     {
         /* Create buffer with VAO and build vertex array */
         auto* bufferGL = buffers_.emplace<GLBufferWithVAO>(bufferDesc.bindFlags, bufferDesc.debugName);
         {
             GLBufferStorage(*bufferGL, bufferDesc, initialData);
-            bufferGL->BuildVertexArray(bufferDesc.vertexAttribs.size(), bufferDesc.vertexAttribs.data());
+            bufferGL->BuildVertexArray(bufferDesc.vertexAttribs);
         }
         return bufferGL;
     }
@@ -205,6 +218,7 @@ static bool IsBufferArrayWithVertexBufferBinding(std::uint32_t numBuffers, Buffe
 
 BufferArray* GLRenderSystem::CreateBufferArray(std::uint32_t numBuffers, Buffer* const * bufferArray)
 {
+    CreateGLContextOnce();
     RenderSystem::AssertCreateBufferArray(numBuffers, bufferArray);
 
     /* Create vertex buffer array and build VAO if there is at least one buffer with VertexBuffer binding */
@@ -234,14 +248,14 @@ void GLRenderSystem::ReadBuffer(Buffer& buffer, std::uint64_t offset, void* data
 {
     auto& bufferGL = LLGL_CAST(GLBuffer&, buffer);
 
-    #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+    #if LLGL_GLEXT_MEMORY_BARRIERS
     if ((bufferGL.GetBindFlags() & BindFlags::Storage) != 0)
     {
         /* Ensure all shader writes to the buffer completed */
         if (HasExtension(GLExt::ARB_shader_image_load_store))
             glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
     }
-    #endif
+    #endif // /LLGL_GLEXT_MEMORY_BARRIERS
 
     bufferGL.GetBufferSubData(static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(dataSize), data);
 }
@@ -256,10 +270,12 @@ static GLbitfield ToGLMapBufferAccess(CPUAccess access)
 {
     switch (access)
     {
+        #if GL_ARB_buffer_storage
         case CPUAccess::ReadOnly:       return GL_MAP_READ_BIT;
         case CPUAccess::WriteOnly:      return GL_MAP_WRITE_BIT;
         case CPUAccess::WriteDiscard:   return GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT;
         case CPUAccess::ReadWrite:      return GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+        #endif
         default:                        return 0;
     }
 }
@@ -318,6 +334,7 @@ void GLRenderSystem::ValidateGLTextureType(const TextureType type)
 
 Texture* GLRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
+    CreateGLContextOnce();
     ValidateGLTextureType(textureDesc.type);
 
     /* Create <GLTexture> object; will result in a GL renderbuffer or texture instance */
@@ -347,14 +364,14 @@ void GLRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
     LLGL_ASSERT_PTR(dstImageView.data);
     auto& textureGL = LLGL_CAST(GLTexture&, texture);
 
-    #ifdef LLGL_GLEXT_MEMORY_BARRIERS
+    #if LLGL_GLEXT_MEMORY_BARRIERS
     if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
     {
         /* Ensure all shader writes to the texture completed */
         if (HasExtension(GLExt::ARB_shader_image_load_store))
             glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
     }
-    #endif
+    #endif // /LLGL_GLEXT_MEMORY_BARRIERS
 
     textureGL.GetTextureSubImage(textureRegion, dstImageView, false);
 }
@@ -363,19 +380,17 @@ void GLRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 
 Sampler* GLRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 {
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
+    CreateGLContextOnce();
     if (!HasNativeSamplers())
     {
         /* If GL_ARB_sampler_objects is not supported, use emulated sampler states */
-        auto* samplerGL2X = samplersGL2X_.emplace<GL2XSampler>();
-        samplerGL2X->SamplerParameters(samplerDesc);
-        return samplerGL2X;
+        auto* emulatedSamplerGL = emulatedSamplers_.emplace<GLEmulatedSampler>();
+        emulatedSamplerGL->SamplerParameters(samplerDesc);
+        return emulatedSamplerGL;
     }
     else
-    #endif
     {
         /* Create native GL sampler state */
-        LLGL_ASSERT(HasNativeSamplers(), "LLGL was not compiled with LLGL_GL_ENABLE_OPENGL2X but \"GL_ARB_sampler_objects\" is not supported");
         auto* samplerGL = samplers_.emplace<GLSampler>(samplerDesc.debugName);
         samplerGL->SamplerParameters(samplerDesc);
         return samplerGL;
@@ -384,15 +399,11 @@ Sampler* GLRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 
 void GLRenderSystem::Release(Sampler& sampler)
 {
-    #ifdef LLGL_GL_ENABLE_OPENGL2X
     /* If GL_ARB_sampler_objects is not supported, release emulated sampler states */
     if (!HasNativeSamplers())
-        samplersGL2X_.erase(&sampler);
+        emulatedSamplers_.erase(&sampler);
     else
         samplers_.erase(&sampler);
-    #else
-    samplers_.erase(&sampler);
-    #endif
 }
 
 /* ----- Resource Heaps ----- */
@@ -429,6 +440,8 @@ void GLRenderSystem::Release(RenderPass& renderPass)
 
 RenderTarget* GLRenderSystem::CreateRenderTarget(const RenderTargetDescriptor& renderTargetDesc)
 {
+    /* Make sure we have a GLContext with compatible resolution */
+    CreateGLContextOnce();
     LLGL_ASSERT_RENDERING_FEATURE_SUPPORT(hasRenderTargets);
     return renderTargets_.emplace<GLRenderTarget>(GetRenderingCaps().limits, renderTargetDesc);
 }
@@ -442,6 +455,7 @@ void GLRenderSystem::Release(RenderTarget& renderTarget)
 
 Shader* GLRenderSystem::CreateShader(const ShaderDescriptor& shaderDesc)
 {
+    CreateGLContextOnce();
     RenderSystem::AssertCreateShader(shaderDesc);
 
     /* Validate rendering capabilities for required shader type */
@@ -574,24 +588,25 @@ bool GLRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
  * ======= Private: =======
  */
 
-void GLRenderSystem::CreateGLContextDependentDevices(GLStateManager& stateManager)
+void GLRenderSystem::CreateGLContextOnce()
+{
+    (void)contextMngr_.AllocContext();
+}
+
+void GLRenderSystem::RegisterNewGLContext(GLContext& /*context*/, const GLPixelFormat& pixelFormat)
 {
     /* Enable debug callback function */
     if (debugContext_)
         EnableDebugCallback();
-
-    /* Create command queue instance */
-    commandQueue_ = MakeUnique<GLCommandQueue>(stateManager);
-
-    /* Query renderer information and limits */
-    QueryRendererInfo();
-    QueryRenderingCaps();
 }
 
-#ifdef GL_KHR_debug
+#if LLGL_GLEXT_DEBUG
 
-void APIENTRY GLDebugCallback(
-    GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* /*userParam*/)
+#ifdef LLGL_OPENGL
+void APIENTRY GLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* /*userParam*/)
+#else
+void GL_APIENTRY GLDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* /*userParam*/)
+#endif
 {
     /* Forward callback to log */
     DebugPrintf(
@@ -600,7 +615,7 @@ void APIENTRY GLDebugCallback(
     );
 }
 
-#endif // /GL_KHR_debug
+#endif // /LLGL_GLEXT_DEBUG
 
 struct GLDebugMessageMetaData
 {
@@ -609,7 +624,7 @@ struct GLDebugMessageMetaData
 
 void GLRenderSystem::EnableDebugCallback(bool enable)
 {
-    #ifdef GL_KHR_debug
+    #if LLGL_GLEXT_DEBUG
 
     if (HasExtension(GLExt::KHR_debug))
     {
@@ -638,13 +653,26 @@ void GLRenderSystem::EnableDebugCallback(bool enable)
         }
     }
 
-    #endif // /GL_KHR_debug
+    #endif // /LLGL_GLEXT_DEBUG
 }
 
 static std::string GLGetString(GLenum name)
 {
     const GLubyte* bytes = glGetString(name);
     return (bytes != nullptr ? std::string(reinterpret_cast<const char*>(bytes)) : "");
+}
+
+static void GLQueryRendererInfo(RendererInfo& info)
+{
+    info.rendererName           = GLProfile::GetAPIName() + std::string(" ") + GLGetString(GL_VERSION);
+    info.deviceName             = GLGetString(GL_RENDERER);
+    info.vendorName             = GLGetString(GL_VENDOR);
+    info.shadingLanguageName    = GLProfile::GetShadingLanguageName() + std::string(" ") + GLGetString(GL_SHADING_LANGUAGE_VERSION);
+
+    const std::set<const char*>& extensionNames = GetLoadedOpenGLExtensions();
+    info.extensionNames = std::vector<std::string>(extensionNames.begin(), extensionNames.end());
+
+    GLQueryPipelineCacheID(info.pipelineCacheID);
 }
 
 static void AppendCacheIDBytes(std::vector<char>& cacheID, const void* bytes, std::size_t count)
@@ -660,6 +688,7 @@ static void AppendCacheIDValue(std::vector<char>& cacheID, const T& val)
     AppendCacheIDBytes(cacheID, &val, sizeof(val));
 }
 
+// Must not be static to be available in GL module
 void GLQueryPipelineCacheID(std::vector<char>& cacheID)
 {
     #ifdef GL_ARB_get_program_binary
@@ -686,24 +715,18 @@ void GLQueryPipelineCacheID(std::vector<char>& cacheID)
     #endif // /GL_ARB_get_program_binary
 }
 
-void GLRenderSystem::QueryRendererInfo()
+bool GLRenderSystem::QueryRendererDetails(RendererInfo* outInfo, RenderingCapabilities* outCaps)
 {
-    RendererInfo info;
-
-    info.rendererName           = GLProfile::GetAPIName() + std::string(" ") + GLGetString(GL_VERSION);
-    info.deviceName             = GLGetString(GL_RENDERER);
-    info.vendorName             = GLGetString(GL_VENDOR);
-    info.shadingLanguageName    = GLProfile::GetShadingLanguageName() + std::string(" ") + GLGetString(GL_SHADING_LANGUAGE_VERSION);
-    GLQueryPipelineCacheID(info.pipelineCacheID);
-
-    SetRendererInfo(info);
-}
-
-void GLRenderSystem::QueryRenderingCaps()
-{
-    RenderingCapabilities caps;
-    GLQueryRenderingCaps(caps);
-    SetRenderingCaps(caps);
+    if (outInfo != nullptr || outCaps != nullptr)
+    {
+        /* Make sure we have a GL context before querying information from it */
+        CreateGLContextOnce();
+        if (outInfo != nullptr)
+            GLQueryRendererInfo(*outInfo);
+        if (outCaps != nullptr)
+            GLQueryRenderingCaps(*outCaps);
+    }
+    return true;
 }
 
 

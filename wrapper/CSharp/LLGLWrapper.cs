@@ -20,19 +20,29 @@ namespace LLGL
         Undefined   = 0x00000000,
         Null        = 0x00000001,
         OpenGL      = 0x00000002,
-        OpenGLES1   = 0x00000003,
-        OpenGLES2   = 0x00000004,
-        OpenGLES3   = 0x00000005,
+        OpenGLES    = 0x00000003,
+        WebGL       = 0x00000004,
+        WebGPU      = 0x00000005,
         Direct3D9   = 0x00000006,
         Direct3D10  = 0x00000007,
         Direct3D11  = 0x00000008,
         Direct3D12  = 0x00000009,
         Vulkan      = 0x0000000A,
         Metal       = 0x0000000B,
+        OpenGLES1   = OpenGLES,
+        OpenGLES2   = OpenGLES,
+        OpenGLES3   = OpenGLES,
         Reserved    = 0x000000FF,
     }
 
     /* ----- Enumerations ----- */
+
+    public enum EventAction
+    {
+        Began,
+        Changed,
+        Ended,
+    }
 
     public enum RenderConditionMode
     {
@@ -134,6 +144,37 @@ namespace LLGL
         BC4SNorm,
         BC5UNorm,
         BC5SNorm,
+        ASTC4x4,
+        ASTC4x4_sRGB,
+        ASTC5x4,
+        ASTC5x4_sRGB,
+        ASTC5x5,
+        ASTC5x5_sRGB,
+        ASTC6x5,
+        ASTC6x5_sRGB,
+        ASTC6x6,
+        ASTC6x6_sRGB,
+        ASTC8x5,
+        ASTC8x5_sRGB,
+        ASTC8x6,
+        ASTC8x6_sRGB,
+        ASTC8x8,
+        ASTC8x8_sRGB,
+        ASTC10x5,
+        ASTC10x5_sRGB,
+        ASTC10x6,
+        ASTC10x6_sRGB,
+        ASTC10x8,
+        ASTC10x8_sRGB,
+        ASTC10x10,
+        ASTC10x10_sRGB,
+        ASTC12x10,
+        ASTC12x10_sRGB,
+        ASTC12x12,
+        ASTC12x12_sRGB,
+        ETC1UNorm,
+        ETC2UNorm,
+        ETC2UNorm_sRGB,
     }
 
     public enum ImageFormat
@@ -150,6 +191,7 @@ namespace LLGL
         Depth,
         DepthStencil,
         Stencil,
+        Compressed,
         BC1,
         BC2,
         BC3,
@@ -1177,8 +1219,10 @@ namespace LLGL
 
     public class ProfileTimeRecord
     {
-        public AnsiString Annotation { get; set; }  = "";
-        public long       ElapsedTime { get; set; } = 0;
+        public AnsiString Annotation { get; set; }    = "";
+        public long       CPUTicksStart { get; set; } = 0;
+        public long       CPUTicksEnd { get; set; }   = 0;
+        public long       ElapsedTime { get; set; }   = 0;
 
         public ProfileTimeRecord() { }
 
@@ -1198,7 +1242,9 @@ namespace LLGL
                     {
                         native.annotation = annotationPtr;
                     }
-                    native.elapsedTime = ElapsedTime;
+                    native.cpuTicksStart = CPUTicksStart;
+                    native.cpuTicksEnd   = CPUTicksEnd;
+                    native.elapsedTime   = ElapsedTime;
                 }
                 return native;
             }
@@ -1206,8 +1252,10 @@ namespace LLGL
             {
                 unsafe
                 {
-                    Annotation  = Marshal.PtrToStringAnsi((IntPtr)value.annotation);
-                    ElapsedTime = value.elapsedTime;
+                    Annotation    = Marshal.PtrToStringAnsi((IntPtr)value.annotation);
+                    CPUTicksStart = value.cpuTicksStart;
+                    CPUTicksEnd   = value.cpuTicksEnd;
+                    ElapsedTime   = value.elapsedTime;
                 }
             }
         }
@@ -3456,8 +3504,10 @@ namespace LLGL
 
         public unsafe struct ProfileTimeRecord
         {
-            public byte* annotation;  /* = "" */
-            public long  elapsedTime; /* = 0 */
+            public byte* annotation;    /* = "" */
+            public long  cpuTicksStart; /* = 0 */
+            public long  cpuTicksEnd;   /* = 0 */
+            public long  elapsedTime;   /* = 0 */
         }
 
         public unsafe struct ProfileCommandQueueRecord
@@ -3622,6 +3672,14 @@ namespace LLGL
         {
             public IntPtr onProcessEvents;
             public IntPtr onQuit;
+            public IntPtr onInit;
+            public IntPtr onDestroy;
+            public IntPtr onDraw;
+            public IntPtr onResize;
+            public IntPtr onTapGesture;
+            public IntPtr onPanGesture;
+            public IntPtr onKeyDown;
+            public IntPtr onKeyUp;
         }
 
         public unsafe struct WindowEventListener
@@ -4102,6 +4160,30 @@ namespace LLGL
         public unsafe delegate void OnCanvasQuitDelegate(Canvas sender, bool* veto);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasInitDelegate(Canvas sender);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasDestroyDelegate(Canvas sender);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasDrawDelegate(Canvas sender);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasResizeDelegate(Canvas sender, ref Extent2D clientAreaSize);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasTapGestureDelegate(Canvas sender, ref Offset2D position, int numTouches);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasPanGestureDelegate(Canvas sender, ref Offset2D position, int numTouches, float dx, float dy, EventAction action);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasKeyDownDelegate(Canvas sender, Key keyCode);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void OnCanvasKeyUpDelegate(Canvas sender, Key keyCode);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public unsafe delegate void ReportCallbackDelegate(ReportType type, [MarshalAs(UnmanagedType.LPStr)] string text, void* userData);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -4161,8 +4243,14 @@ namespace LLGL
         [DllImport(DllName, EntryPoint="llglSetCanvasTitle", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void SetCanvasTitle(Canvas canvas, [MarshalAs(UnmanagedType.LPWStr)] string title);
 
+        [DllImport(DllName, EntryPoint="llglSetCanvasTitleUTF8", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void SetCanvasTitleUTF8(Canvas canvas, [MarshalAs(UnmanagedType.LPStr)] string title);
+
         [DllImport(DllName, EntryPoint="llglGetCanvasTitle", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe IntPtr GetCanvasTitle(Canvas canvas, IntPtr outTitleLength, char* outTitle);
+
+        [DllImport(DllName, EntryPoint="llglGetCanvasTitleUTF8", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe IntPtr GetCanvasTitleUTF8(Canvas canvas, IntPtr outTitleLength, byte* outTitle);
 
         [DllImport(DllName, EntryPoint="llglHasCanvasQuit", CallingConvention=CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
@@ -4182,6 +4270,30 @@ namespace LLGL
 
         [DllImport(DllName, EntryPoint="llglPostCanvasQuit", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void PostCanvasQuit(Canvas canvas);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasInit", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasInit(Canvas sender);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasDestroy", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasDestroy(Canvas sender);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasDraw", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasDraw(Canvas sender);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasResize", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasResize(Canvas sender, ref Extent2D clientAreaSize);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasTapGesture", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasTapGesture(Canvas sender, ref Offset2D position, int numTouches);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasPanGesture", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasPanGesture(Canvas sender, ref Offset2D position, int numTouches, float dx, float dy, EventAction action);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasKeyDown", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasKeyDown(Canvas sender, Key keyCode);
+
+        [DllImport(DllName, EntryPoint="llglPostCanvasKeyUp", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void PostCanvasKeyUp(Canvas sender, Key keyCode);
 
         [DllImport(DllName, EntryPoint="llglBegin", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void Begin(CommandBuffer commandBuffer);
@@ -4329,6 +4441,9 @@ namespace LLGL
 
         [DllImport(DllName, EntryPoint="llglDrawIndexedIndirectExt", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void DrawIndexedIndirectExt(Buffer buffer, long offset, int numCommands, int stride);
+
+        [DllImport(DllName, EntryPoint="llglDrawStreamOutput", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void DrawStreamOutput();
 
         [DllImport(DllName, EntryPoint="llglDispatch", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void Dispatch(int numWorkGroupsX, int numWorkGroupsY, int numWorkGroupsZ);
@@ -4701,15 +4816,19 @@ namespace LLGL
         [return: MarshalAs(UnmanagedType.I1)]
         public static extern unsafe bool AdaptSurfaceForVideoMode(Surface surface, ref Extent2D outResolution, bool* outFullscreen);
 
-        [DllImport(DllName, EntryPoint="llglResetSurfacePixelFormat", CallingConvention=CallingConvention.Cdecl)]
-        public static extern unsafe void ResetSurfacePixelFormat(Surface surface);
-
         [DllImport(DllName, EntryPoint="llglProcessSurfaceEvents", CallingConvention=CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         public static extern unsafe bool ProcessSurfaceEvents();
 
         [DllImport(DllName, EntryPoint="llglFindSurfaceResidentDisplay", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe Display FindSurfaceResidentDisplay(Surface surface);
+
+        [DllImport(DllName, EntryPoint="llglResetSurfacePixelFormat", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe void ResetSurfacePixelFormat(Surface surface);
+
+        [DllImport(DllName, EntryPoint="llglIsPresentable", CallingConvention=CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        public static extern unsafe bool IsPresentable(SwapChain swapChain);
 
         [DllImport(DllName, EntryPoint="llglPresent", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void Present(SwapChain swapChain);

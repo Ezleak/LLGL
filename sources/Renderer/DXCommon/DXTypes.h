@@ -15,6 +15,8 @@
 #include <LLGL/PipelineStateFlags.h>
 #include <LLGL/TextureFlags.h>
 #include <LLGL/BufferFlags.h>
+#include <LLGL/SystemValue.h>
+#include "../../Core/Exception.h"
 #include <dxgiformat.h>
 #include <d3dcommon.h>
 
@@ -26,14 +28,17 @@ namespace DXTypes
 {
 
 
-[[noreturn]]
-void MapFailed(const char* typeName, const char* dxTypeName);
+#define LLGL_TRAP_DX_MAP(TYPE, VALUE, DXTYPE) \
+    LLGL_TRAP("failed to map LLGL::%s(%d) to %s Direct3D parameter", #TYPE, static_cast<int>(VALUE), #DXTYPE)
 
-[[noreturn]]
-void UnmapFailed(const char* typeName, const char* dxTypeName);
+#define LLGL_TRAP_DX_MAP_NOVALUE(TYPE, DXTYPE) \
+    LLGL_TRAP("failed to map LLGL::%s to %s Direct3D parameter", #TYPE, #DXTYPE)
 
-[[noreturn]]
-void ParamNotSupported(const char* paramName, const char* requirement);
+#define LLGL_TRAP_DX_UNMAP(TYPE, DXTYPE, DXVALUE) \
+    LLGL_TRAP("failed to unmap LLGL::%s from %s Direct3D parameter (0x%08X)", #TYPE, static_cast<int>(DXVALUE))
+
+#define LLGL_TRAP_DX_PARAM_UNSUPPORTED(PARAM, REQUIREMENT) \
+    LLGL_TRAP("parameter '%s' requires %s", PARAM, REQUIREMENT)
 
 
 DXGI_FORMAT ToDXGIFormat(const DataType dataType);
@@ -71,6 +76,9 @@ ResourceType            Unmap( const D3D_SRV_DIMENSION      dimension );
 bool HasStencilComponent(const DXGI_FORMAT format);
 bool IsDXGIFormatSRGB(const DXGI_FORMAT format);
 bool MakeUAVClearVector(const DXGI_FORMAT format, UINT (&valuesVec4)[4], UINT value);
+
+// Converts a vertex output system value to its HLSL semantic identifier or null if there is no such semantic.
+const char* SystemValueToString(SystemValue sytemValue);
 
 
 } // /namespace DXTypes

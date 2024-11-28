@@ -71,7 +71,7 @@ class LLGL_EXPORT Input : public Interface
         //! Returns true if the specified key was pressed down in the previous event processing.
         bool KeyDown(Key keyCode) const;
 
-        //! Returns true if the specified key was pressed down in the previous event processing (this event will be repeated, depending on the paltform settings).
+        //! Returns true if the specified key was pressed down in the previous event processing (this event will be repeated, depending on the platform settings).
         bool KeyDownRepeated(Key keyCode) const;
 
         //! Returns true if the specified key was released in the previous event processing.
@@ -84,10 +84,10 @@ class LLGL_EXPORT Input : public Interface
         bool KeyDoubleClick(Key keyCode) const;
 
         //! Returns the local mouse position.
-        const Offset2D& GetMousePosition() const;
+        Offset2D GetMousePosition() const;
 
         //! Returns the global mouse motion.
-        const Offset2D& GetMouseMotion() const;
+        Offset2D GetMouseMotion() const;
 
         //! Returns the mouse wheel motion.
         int GetWheelMotion() const;

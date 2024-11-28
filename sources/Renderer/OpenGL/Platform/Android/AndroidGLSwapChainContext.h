@@ -10,6 +10,7 @@
 
 
 #include "../GLSwapChainContext.h"
+#include "AndroidSharedEGLSurface.h"
 #include "../../OpenGL.h"
 #include <EGL/egl.h>
 
@@ -27,20 +28,25 @@ class AndroidGLSwapChainContext final : public GLSwapChainContext
     public:
 
         AndroidGLSwapChainContext(AndroidGLContext& context, Surface& surface);
-        ~AndroidGLSwapChainContext();
 
+        bool HasDrawable() const override;
         bool SwapBuffers() override;
         void Resize(const Extent2D& resolution) override;
 
     public:
 
+        void InitEGLSurface(Surface& surface);
+        void DestroyEGLSurface();
+
         static bool MakeCurrentEGLContext(AndroidGLSwapChainContext* context);
 
     private:
 
-        EGLDisplay display_ = nullptr;
-        EGLContext context_ = nullptr;
-        EGLSurface surface_ = nullptr;
+        class CanvasEventListener;
+
+        EGLDisplay                  display_        = nullptr;
+        EGLContext                  context_        = nullptr;
+        AndroidSharedEGLSurfacePtr  sharedSurface_;
 
 };
 

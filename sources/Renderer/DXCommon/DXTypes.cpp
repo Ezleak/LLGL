@@ -6,7 +6,6 @@
  */
 
 #include "DXTypes.h"
-#include "../../Core/Exception.h"
 #include <stdexcept>
 #include <string>
 
@@ -17,24 +16,6 @@ namespace LLGL
 namespace DXTypes
 {
 
-
-[[noreturn]]
-void MapFailed(const char* typeName, const char* dxTypeName)
-{
-    LLGL_TRAP("failed to map <LLGL::%s> to <%s> Direct3D parameter", typeName, dxTypeName);
-}
-
-[[noreturn]]
-void UnmapFailed(const char* typeName, const char* dxTypeName)
-{
-    LLGL_TRAP("failed to unmap <LLGL::%s> from <%s> Direct3D parameter", typeName, dxTypeName);
-}
-
-[[noreturn]]
-void ParamNotSupported(const char* paramName, const char* requirement)
-{
-    LLGL_TRAP("parameter '%s' requires %s", paramName, requirement);
-}
 
 DXGI_FORMAT ToDXGIFormat(const DataType dataType)
 {
@@ -51,7 +32,7 @@ DXGI_FORMAT ToDXGIFormat(const DataType dataType)
         case DataType::Float32:     return DXGI_FORMAT_R32_FLOAT;
         case DataType::Float64:     break;
     }
-    MapFailed("DataType", "DXGI_FORMAT");
+    LLGL_TRAP_DX_MAP(DataType, dataType, DXGI_FORMAT);
 }
 
 DXGI_FORMAT ToDXGIFormat(const Format format)
@@ -167,8 +148,43 @@ DXGI_FORMAT ToDXGIFormat(const Format format)
         case Format::BC4SNorm:          return DXGI_FORMAT_BC4_SNORM;
         case Format::BC5UNorm:          return DXGI_FORMAT_BC5_UNORM;
         case Format::BC5SNorm:          return DXGI_FORMAT_BC5_SNORM;
+
+        /* --- Advanced scalable texture compression (ASTC) formats --- */
+        case Format::ASTC4x4:           break;
+        case Format::ASTC4x4_sRGB:      break;
+        case Format::ASTC5x4:           break;
+        case Format::ASTC5x4_sRGB:      break;
+        case Format::ASTC5x5:           break;
+        case Format::ASTC5x5_sRGB:      break;
+        case Format::ASTC6x5:           break;
+        case Format::ASTC6x5_sRGB:      break;
+        case Format::ASTC6x6:           break;
+        case Format::ASTC6x6_sRGB:      break;
+        case Format::ASTC8x5:           break;
+        case Format::ASTC8x5_sRGB:      break;
+        case Format::ASTC8x6:           break;
+        case Format::ASTC8x6_sRGB:      break;
+        case Format::ASTC8x8:           break;
+        case Format::ASTC8x8_sRGB:      break;
+        case Format::ASTC10x5:          break;
+        case Format::ASTC10x5_sRGB:     break;
+        case Format::ASTC10x6:          break;
+        case Format::ASTC10x6_sRGB:     break;
+        case Format::ASTC10x8:          break;
+        case Format::ASTC10x8_sRGB:     break;
+        case Format::ASTC10x10:         break;
+        case Format::ASTC10x10_sRGB:    break;
+        case Format::ASTC12x10:         break;
+        case Format::ASTC12x10_sRGB:    break;
+        case Format::ASTC12x12:         break;
+        case Format::ASTC12x12_sRGB:    break;
+
+        /* --- Ericsson texture compression (ETC) formats --- */
+        case Format::ETC1UNorm:         break;
+        case Format::ETC2UNorm:         break;
+        case Format::ETC2UNorm_sRGB:    break;
     }
-    MapFailed("Format", "DXGI_FORMAT");
+    LLGL_TRAP_DX_MAP(Format, format, DXGI_FORMAT);
 }
 
 D3D_PRIMITIVE_TOPOLOGY ToD3DPrimitiveTopology(const PrimitiveTopology topology)
@@ -217,7 +233,7 @@ D3D_PRIMITIVE_TOPOLOGY ToD3DPrimitiveTopology(const PrimitiveTopology topology)
         case PrimitiveTopology::Patches31:              return D3D_PRIMITIVE_TOPOLOGY_31_CONTROL_POINT_PATCHLIST;
         case PrimitiveTopology::Patches32:              return D3D_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST;
     }
-    MapFailed("PrimitiveTopology", "D3D_PRIMITIVE_TOPOLOGY");
+    LLGL_TRAP_DX_MAP(PrimitiveTopology, topology, D3D_PRIMITIVE_TOPOLOGY);
 }
 
 Format Unmap(const DXGI_FORMAT format)
@@ -349,7 +365,9 @@ SystemValue Unmap(const D3D_NAME name)
         case D3D_NAME_RENDER_TARGET_ARRAY_INDEX:    return SystemValue::RenderTargetIndex;
         case D3D_NAME_COVERAGE:                     return SystemValue::SampleMask;
         case D3D_NAME_SAMPLE_INDEX:                 return SystemValue::SampleID;
-        case D3D_NAME_STENCIL_REF:                  return SystemValue::Stencil;
+        #ifdef _MSC_VER
+        case D3D_NAME_STENCIL_REF:                  return SystemValue::Stencil; // Missing in d3dcommon.h for MSYS2
+        #endif
         case D3D_NAME_VERTEX_ID:                    return SystemValue::VertexID;
         case D3D_NAME_VIEWPORT_ARRAY_INDEX:         return SystemValue::ViewportIndex;
         default:                                    return SystemValue::Undefined;
@@ -821,6 +839,31 @@ bool MakeUAVClearVector(const DXGI_FORMAT format, UINT (&valuesVec4)[4], UINT va
         break;
     }
     return false;
+}
+
+const char* SystemValueToString(SystemValue sytemValue)
+{
+    switch (sytemValue)
+    {
+        case SystemValue::Undefined:            break;
+        case SystemValue::ClipDistance:         return "SV_ClipDistance";
+        case SystemValue::Color:                return "SV_Target";
+        case SystemValue::CullDistance:         return "SV_CullDistance";
+        case SystemValue::Depth:                return "SV_Depth";
+        case SystemValue::DepthGreater:         return "SV_DepthGreaterEqual";
+        case SystemValue::DepthLess:            return "SV_DepthLessEqual";
+        case SystemValue::FrontFacing:          return "SV_IsFrontFace";
+        case SystemValue::InstanceID:           return "SV_InstanceID";
+        case SystemValue::Position:             return "SV_Position";
+        case SystemValue::PrimitiveID:          return "SV_PrimitiveID";
+        case SystemValue::RenderTargetIndex:    return "SV_RenderTargetArrayIndex";
+        case SystemValue::SampleMask:           return "SV_Coverage";
+        case SystemValue::SampleID:             return "SV_SampleIndex";
+        case SystemValue::Stencil:              return "SV_StencilRef";
+        case SystemValue::VertexID:             return "SV_VertexID";
+        case SystemValue::ViewportIndex:        return "SV_ViewportArrayIndex";
+    }
+    return nullptr;
 }
 
 

@@ -9,10 +9,14 @@
 #define LLGL_GL_EXTENSIONS_H
 
 
-#ifdef LLGL_OPENGLES3
-#   include "../GLESProfile/GLESExtensions.h"
-#else
-#   include "../GLCoreProfile/GLCoreExtensions.h"
+#if LLGL_OPENGL
+#   if LLGL_GL_ENABLE_OPENGL2X
+#       include "../Profile/GLCompat/GLCompatExtensions.h"
+#   else
+#       include "../Profile/GLCore/GLCoreExtensions.h"
+#   endif
+#elif LLGL_OPENGLES3
+#   include "../Profile/GLES/GLESExtensions.h"
 #endif
 
 

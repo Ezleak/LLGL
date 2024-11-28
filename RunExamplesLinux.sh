@@ -4,15 +4,18 @@ DEFAULT_BUILD_DIRS=("build_linux/build" "build_linux/build/Debug" "bin/Linux-x86
 
 BUILD_DIR="${DEFAULT_BUILD_DIRS[0]}"
 
-if [ "$#" -eq 1 ]; then
-    HELLO_EXAMPLE="Example_HelloTriangle"
-    BUILD_DIR=$1
-    if [[ "$BUILD_DIR" == */ ]]; then
-        BUILD_DIR="${BUILD_DIR::-1}" # Remove trailing '/' character from path
+if [ "$#" -ge 1 ]; then
+    if [ "$1" != "--" ]; then
+        HELLO_EXAMPLE="Example_HelloTriangle"
+        BUILD_DIR=$1
+        if [[ "$BUILD_DIR" == */ ]]; then
+            BUILD_DIR="${BUILD_DIR::-1}" # Remove trailing '/' character from path
+        fi
+        if [ -f "$BUILD_DIR/build/$HELLO_EXAMPLE" ] || [ -f "$BUILD_DIR/build/${HELLO_EXAMPLE}D" ]; then
+            BUILD_DIR="$BUILD_DIR/build"
+        fi
     fi
-    if [ -f "$BUILD_DIR/build/$HELLO_EXAMPLE" ] || [ -f "$BUILD_DIR/build/${HELLO_EXAMPLE}D" ]; then
-        BUILD_DIR="$BUILD_DIR/build"
-    fi
+    shift
 else
     for DIR in "${DEFAULT_BUILD_DIRS[@]}"; do
         if [ -d "$DIR" ]; then
@@ -39,12 +42,12 @@ fi
 
 list_examples()
 {
-    EXCLUDED=(MultiRenderer MultiThreading PBR ComputeShader UnorderedAccess)
+    EXCLUDED=(MultiRenderer MultiThreading PBR ComputeShader)
     EXAMPLE_DIRS=($(ls examples/Cpp))
     for DIR in "${EXAMPLE_DIRS[@]}"; do
         if ! echo "${EXCLUDED[@]}}" | grep -qw "$DIR"; then
             # Include example if its source and binary files exist
-            if [ -f "examples/Cpp/$DIR/Example.cpp" ] && [ -f "$BUILD_DIR/Example_$DIR" ]; then
+            if [ -f "examples/Cpp/$DIR/Example.cpp" ] && [ -f "$BUILD_DIR/Example_$DIR" -o -f "$BUILD_DIR/Example_${DIR}D" ]; then
                 echo "$DIR"
             fi
         fi
@@ -54,13 +57,14 @@ list_examples()
 run_example()
 (
     EXAMPLE=$1
+    shift
     EXE="../../../$BUILD_DIR/Example_$EXAMPLE"
     EXE_D="${EXE}D"
     cd examples/Cpp/$EXAMPLE
     if [ -f "$EXE_D" ]; then
-        eval $EXE_D
+        eval $EXE_D $@
     else
-        eval $EXE
+        eval $EXE $@
     fi
 )
 
@@ -68,5 +72,5 @@ EXAMPLES=($(list_examples))
 
 PS3="Select example: "
 select OPT in "${EXAMPLES[@]}"; do
-    run_example $OPT
+    run_example $OPT $@
 done

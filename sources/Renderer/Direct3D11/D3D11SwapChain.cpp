@@ -35,7 +35,7 @@ D3D11SwapChain::D3D11SwapChain(
     depthBufferLocator_  { ResourceType::Texture, BindFlags::DepthStencilAttachment   }
 {
     /* Setup surface for the swap-chain */
-    SetOrCreateSurface(surface, desc.resolution, desc.fullscreen, nullptr);
+    SetOrCreateSurface(surface, SwapChain::BuildDefaultSurfaceTitle(renderSystem.GetRendererInfo()), desc.resolution, desc.fullscreen);
 
     /* Create D3D objects */
     CreateSwapChain(factory, GetResolution(), desc.samples, desc.swapBuffers);
@@ -43,6 +43,10 @@ D3D11SwapChain::D3D11SwapChain(
 
     if (desc.debugName != nullptr)
         SetDebugName(desc.debugName);
+
+    /* Show default surface */
+    if (!surface)
+        ShowSurface();
 }
 
 void D3D11SwapChain::SetDebugName(const char* name)
@@ -73,6 +77,11 @@ void D3D11SwapChain::SetDebugName(const char* name)
         }
         hasDebugName_ = false;
     }
+}
+
+bool D3D11SwapChain::IsPresentable() const
+{
+    return true; // dummy
 }
 
 void D3D11SwapChain::Present()

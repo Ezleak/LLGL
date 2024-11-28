@@ -14,6 +14,11 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
+#include <LLGL/Platform/Platform.h>
+#ifdef LLGL_OS_ANDROID
+#   include <android/log.h>
+#endif
+
 
 namespace LLGL
 {
@@ -38,12 +43,12 @@ LLGL_EXPORT void Trap(const char* origin, const char* format, ...)
 
     LLGL_STRING_PRINTF(report, format);
 
-    #ifdef LLGL_ENABLE_EXCEPTIONS
+    #if LLGL_ENABLE_EXCEPTIONS
 
     /* Throw exception with report and optional origin */
     throw std::runtime_error(report);
 
-    #else
+    #else // LLGL_ENABLE_EXCEPTIONS
 
     #   ifdef LLGL_DEBUG
 
@@ -55,17 +60,26 @@ LLGL_EXPORT void Trap(const char* origin, const char* format, ...)
     /* Break execution if there's a debugger attached */
     LLGL_DEBUG_BREAK();
 
-    #   else
+    #   else // LLGL_DEBUG
+
+    #       ifdef LLGL_OS_ANDROID
+
+    /* Print report to Android specific error log */
+    (void)__android_log_print(ANDROID_LOG_ERROR, "LLGL", "%s\n", report.c_str());
+
+    #       else
 
     /* Print report to standard error output */
     ::fprintf(stderr, "%s\n", report.c_str());
 
-    #   endif
+    #       endif
+
+    #   endif // /LLGL_DEBUG
 
     /* Abort execution as LLGL is trapped in an unrecoverable state */
     ::abort();
 
-    #endif
+    #endif // /LLGL_ENABLE_EXCEPTIONS
 }
 
 [[noreturn]]
@@ -153,13 +167,13 @@ LLGL_EXPORT void TrapReport(const char* origin, const Report& report)
 
 LLGL_EXPORT std::nullptr_t ReportException(Report* report, const char* format, ...)
 {
-    #ifdef LLGL_ENABLE_EXCEPTIONS
+    #if LLGL_ENABLE_EXCEPTIONS
 
     std::string errorStr;
     LLGL_STRING_PRINTF(errorStr, format);
     throw std::runtime_error(errorStr);
 
-    #else
+    #else // LLGL_ENABLE_EXCEPTIONS
 
     if (report != nullptr)
     {
@@ -170,7 +184,7 @@ LLGL_EXPORT std::nullptr_t ReportException(Report* report, const char* format, .
 
     return nullptr;
 
-    #endif
+    #endif // /LLGL_ENABLE_EXCEPTIONS
 }
 
 

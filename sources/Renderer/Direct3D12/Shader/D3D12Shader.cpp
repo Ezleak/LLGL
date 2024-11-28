@@ -33,7 +33,9 @@ D3D12Shader::D3D12Shader(D3D12RenderSystem& renderSystem, const ShaderDescriptor
 {
     if (BuildShader(desc))
     {
-        if (GetType() == ShaderType::Vertex || GetType() == ShaderType::Geometry)
+        if (GetType() == ShaderType::Vertex         ||
+            GetType() == ShaderType::TessEvaluation ||
+            GetType() == ShaderType::Geometry)
         {
             /* Build input layout and stream-output descriptors for vertex/geometry shaders */
             ReserveVertexAttribs(desc);
@@ -89,7 +91,7 @@ bool D3D12Shader::GetStreamOutputDesc(D3D12_STREAM_OUTPUT_DESC& layoutDesc) cons
         layoutDesc.NumEntries       = static_cast<UINT>(soDeclEntries_.size());
         layoutDesc.pBufferStrides   = soBufferStrides_.data();
         layoutDesc.NumStrides       = static_cast<UINT>(soBufferStrides_.size());
-        layoutDesc.RasterizedStream = 0;//D3D12_SO_NO_RASTERIZED_STREAM;
+        layoutDesc.RasterizedStream = 0;
         return true;
     }
     return false;
@@ -166,12 +168,13 @@ void D3D12Shader::BuildInputLayout(UINT numVertexAttribs, const VertexAttribute*
 Converts a vertex attributes to a D3D12 input element descriptor
 and stores the semantic name in the specified linear string container
 */
-static void Convert(D3D12_SO_DECLARATION_ENTRY& dst, const VertexAttribute& src, LinearStringContainer& stringContainer)
+static void ConvertSODeclEntry(D3D12_SO_DECLARATION_ENTRY& dst, const VertexAttribute& src, LinearStringContainer& stringContainer)
 {
-    dst.Stream          = 0;//src.location;
-    dst.SemanticName    = stringContainer.CopyString(src.name);
+    const char* systemValueSemantic = DXTypes::SystemValueToString(src.systemValue);
+    dst.Stream          = 0;
+    dst.SemanticName    = (systemValueSemantic != nullptr ? systemValueSemantic : stringContainer.CopyString(src.name));
     dst.SemanticIndex   = src.semanticIndex;
-    dst.StartComponent  = 0;//src.offset;
+    dst.StartComponent  = 0;
     dst.ComponentCount  = GetFormatAttribs(src.format).components;
     dst.OutputSlot      = src.slot;
 }
@@ -196,10 +199,10 @@ void D3D12Shader::BuildStreamOutput(UINT numVertexAttribs, const VertexAttribute
         const auto& attr = vertexAttribs[i];
 
         /* Convert vertex attribute to stream-output entry */
-        Convert(soDeclEntries_[i], attr, vertexAttribNames_);
+        ConvertSODeclEntry(soDeclEntries_[i], attr, vertexAttribNames_);
 
         /* Store buffer stide */
-        UINT bufferStride = soBufferStrides_[attr.slot];
+        UINT& bufferStride = soBufferStrides_[attr.slot];
         if (attr.stride == 0)
         {
             /* Error: vertex attribute must not have stride of zero */
@@ -411,7 +414,7 @@ static ShaderResourceReflection* FetchOrInsertResource(
 }
 
 // Converts a D3D12 signature parameter into a vertex attribute
-static void Convert(VertexAttribute& dst, const D3D12_SIGNATURE_PARAMETER_DESC& src)
+static void ConvertD3D12ParamDescToVertexAttrib(VertexAttribute& dst, const D3D12_SIGNATURE_PARAMETER_DESC& src)
 {
     dst.name            = std::string(src.SemanticName);
     dst.format          = DXGetSignatureParameterType(src.ComponentType, src.Mask);
@@ -434,7 +437,7 @@ static HRESULT ReflectShaderVertexAttributes(
 
         /* Add vertex input attribute to output list */
         VertexAttribute vertexAttrib;
-        Convert(vertexAttrib, paramDesc);
+        ConvertD3D12ParamDescToVertexAttrib(vertexAttrib, paramDesc);
         reflection.vertex.inputAttribs.push_back(vertexAttrib);
     }
 
@@ -448,7 +451,7 @@ static HRESULT ReflectShaderVertexAttributes(
 
         /* Add vertex output attribute to output list */
         VertexAttribute vertexAttrib;
-        Convert(vertexAttrib, paramDesc);
+        ConvertD3D12ParamDescToVertexAttrib(vertexAttrib, paramDesc);
         reflection.vertex.outputAttribs.push_back(vertexAttrib);
     }
 
@@ -456,7 +459,7 @@ static HRESULT ReflectShaderVertexAttributes(
 }
 
 // Converts a D3D12 signature parameter into a fragment attribute
-static void Convert(FragmentAttribute& dst, const D3D12_SIGNATURE_PARAMETER_DESC& src)
+static void ConvertD3D12ParamDescToFragmentAttrib(FragmentAttribute& dst, const D3D12_SIGNATURE_PARAMETER_DESC& src)
 {
     dst.name        = std::string(src.SemanticName);
     dst.format      = DXGetSignatureParameterType(src.ComponentType, src.Mask);
@@ -479,7 +482,7 @@ static HRESULT ReflectShaderFragmentAttributes(
 
         /* Add fragment attribute to output list */
         FragmentAttribute fragmentAttrib;
-        Convert(fragmentAttrib, paramDesc);
+        ConvertD3D12ParamDescToFragmentAttrib(fragmentAttrib, paramDesc);
         reflection.fragment.outputAttribs.push_back(fragmentAttrib);
     }
 
@@ -628,13 +631,10 @@ static HRESULT ReflectShaderInputBindings(
     return S_OK;
 }
 
-HRESULT D3D12Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
+// Reflects D3D12 shader bytecode from either DXBC or DXIL code.
+static HRESULT ReflectD3D12ShaderBytecode(ID3DBlob* byteCode, ComPtr<ID3D12ShaderReflection>& outReflection)
 {
-    HRESULT hr = S_OK;
-
-    /* Get shader reflection */
-    ComPtr<ID3D12ShaderReflection> reflectionObject;
-    hr = D3DReflect(byteCode_->GetBufferPointer(), byteCode_->GetBufferSize(), IID_PPV_ARGS(reflectionObject.ReleaseAndGetAddressOf()));
+    HRESULT hr = D3DReflect(byteCode->GetBufferPointer(), byteCode->GetBufferSize(), IID_PPV_ARGS(outReflection.ReleaseAndGetAddressOf()));
 
     #ifdef LLGL_D3D12_ENABLE_DXCOMPILER
     if (FAILED(hr))
@@ -648,14 +648,22 @@ HRESULT D3D12Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
             return hr;
         }
 
-        hr = DXReflectDxilShader(byteCode_.Get(), reflectionObject.ReleaseAndGetAddressOf());
-        if (FAILED(hr))
-            return hr;
+        hr = DXReflectDxilShader(byteCode, outReflection.ReleaseAndGetAddressOf());
     }
-    #else
-        if (FAILED(hr))
-            return hr;
     #endif // /LLGL_D3D12_ENABLE_DXCOMPILER
+
+    return hr;
+}
+
+HRESULT D3D12Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
+{
+    HRESULT hr = S_OK;
+
+    /* Get shader reflection */
+    ComPtr<ID3D12ShaderReflection> reflectionObject;
+    hr = ReflectD3D12ShaderBytecode(byteCode_.Get(), reflectionObject);
+    if (FAILED(hr))
+        return hr;
 
     D3D12_SHADER_DESC shaderDesc;
     hr = reflectionObject->GetDesc(&shaderDesc);
@@ -699,9 +707,12 @@ HRESULT D3D12Shader::ReflectConstantBuffers(std::vector<D3D12ConstantBufferRefle
 {
     HRESULT hr = S_OK;
 
+    if (!byteCode_)
+        return E_FAIL;
+
     /* Get shader reflection */
     ComPtr<ID3D12ShaderReflection> reflectionObject;
-    hr = D3DReflect(byteCode_->GetBufferPointer(), byteCode_->GetBufferSize(), IID_PPV_ARGS(reflectionObject.ReleaseAndGetAddressOf()));
+    hr = ReflectD3D12ShaderBytecode(byteCode_.Get(), reflectionObject);
     if (FAILED(hr))
         return hr;
 
@@ -745,7 +756,8 @@ HRESULT D3D12Shader::ReflectConstantBuffers(std::vector<D3D12ConstantBufferRefle
                 if (FAILED(hr))
                     return hr;
 
-                fieldsInfo.push_back(D3D12ConstantReflection{ fieldDesc.Name, fieldDesc.StartOffset, fieldDesc.Size });
+                if ((fieldDesc.uFlags & D3D_SVF_USED) != 0)
+                    fieldsInfo.push_back(D3D12ConstantReflection{ fieldDesc.Name, fieldDesc.StartOffset, fieldDesc.Size });
             }
 
             /* Write reflection output */

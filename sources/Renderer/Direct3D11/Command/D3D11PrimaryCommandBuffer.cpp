@@ -68,7 +68,7 @@ D3D11PrimaryCommandBuffer::D3D11PrimaryCommandBuffer(
 
 void D3D11PrimaryCommandBuffer::Begin()
 {
-    GetStateManager().ResetStagingBufferPools();
+    GetStateManager().ResetCbufferPool();
 }
 
 void D3D11PrimaryCommandBuffer::End()
@@ -380,6 +380,8 @@ void D3D11PrimaryCommandBuffer::CopyBufferFromTexture(
         const D3D11_BOX srcBox{ 0, 0, 0, copySize, 1, 1 };
         GetNative()->CopySubresourceRegion(dstBufferD3D.GetNative(), 0, dstOffsetU32, 0, 0, intermediateBuffer.Get(), 0, &srcBox);
     }
+
+    GetStateManager().ResetCbufferPool();
 }
 
 void D3D11PrimaryCommandBuffer::FillBuffer(
@@ -658,6 +660,8 @@ void D3D11PrimaryCommandBuffer::CopyTextureFromBuffer(
             );
         }
     }
+
+    GetStateManager().ResetCbufferPool();
 }
 
 void D3D11PrimaryCommandBuffer::CopyTextureFromFramebuffer(
@@ -996,6 +1000,11 @@ void D3D11PrimaryCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_
 {
     auto& bufferD3D = LLGL_CAST(D3D11Buffer&, buffer);
     context_.DrawIndexedInstancedIndirectN(bufferD3D.GetNative(), static_cast<UINT>(offset), numCommands, stride);
+}
+
+void D3D11PrimaryCommandBuffer::DrawStreamOutput()
+{
+    context_.DrawAuto();
 }
 
 /* ----- Compute ----- */

@@ -42,8 +42,8 @@ MTCommandContext::MTCommandContext(id<MTLDevice> device) :
 void MTCommandContext::Reset()
 {
     /* Reset all dirty bits */
-    renderDirtyBits_        = ~0;
-    computeDirtyBits_       = ~0;
+    renderDirtyBits_        = ~0u;
+    computeDirtyBits_       = ~0u;
     isRenderEncoderPaused_  = false;
     boundSwapChain_         = nullptr;
     ResetRenderEncoderState();
@@ -218,6 +218,7 @@ void MTCommandContext::DispatchThreads1D(
     NSUInteger                      numThreads)
 {
     const NSUInteger maxLocalThreads = GetMaxLocalThreads(computePSO);
+    LLGL_ASSERT(maxLocalThreads > 0);
 
     if (@available(iOS 11.0, macOS 10.13, *))
     {
@@ -229,7 +230,7 @@ void MTCommandContext::DispatchThreads1D(
     }
     else
     {
-        /* Disaptch threadgroups with as many local threads as possible */
+        /* Dispatch threadgroups with as many local threads as possible */
         const NSUInteger numThreadGroups = numThreads / maxLocalThreads;
         if (numThreadGroups > 0)
         {
@@ -265,7 +266,7 @@ id<MTLRenderCommandEncoder> MTCommandContext::DispatchTessellationAndGetRenderEn
         /* Rebind resource heap to bind compute stage resources to the new compute command encoder */
         RebindResourceHeap(computeEncoder);
 
-        /* Disaptch kernel to generate patch tessellation factors */
+        /* Dispatch kernel to generate patch tessellation factors */
         [computeEncoder setComputePipelineState: contextState_.tessPipelineState];
         [computeEncoder
             setBuffer:  tessFactorBuffer
@@ -418,6 +419,38 @@ void MTCommandContext::SetStencilRef(std::uint32_t ref, const StencilFace face)
             break;
     }
     renderDirtyBits_ |= DirtyBit_StencilRef;
+}
+
+void MTCommandContext::SetVisibilityBuffer(id<MTLBuffer> buffer, MTLVisibilityResultMode mode, NSUInteger offset)
+{
+    if (buffer != nil)
+    {
+        /* Check if a new render pass must be started with the new visibility buffer */
+        if (contextState_.visBuffer != buffer)
+        {
+            /* Start new render pass to bind visibility buffer */
+            MTLRenderPassDescriptor* renderPassDesc = CopyRenderPassDesc();
+            renderPassDesc.visibilityResultBuffer = buffer;
+            UpdateRenderPass(renderPassDesc);
+            [renderPassDesc release];
+            contextState_.visBuffer = buffer;
+        }
+
+        /* Check if visibility mode or offset must be updated in the render command encoder */
+        if (renderEncoderState_.visResultMode != mode ||
+            renderEncoderState_.visResultOffset != offset)
+        {
+            renderEncoderState_.visResultMode   = mode;
+            renderEncoderState_.visResultOffset = offset;
+            renderDirtyBits_ |= DirtyBit_VisibilityResultMode;
+        }
+    }
+    else if (renderEncoderState_.visResultMode != MTLVisibilityResultModeDisabled)
+    {
+        /* Disable visibility result mode but don't bother starting a new render pass */
+        renderEncoderState_.visResultMode = MTLVisibilityResultModeDisabled;
+        renderDirtyBits_ |= DirtyBit_VisibilityResultMode;
+    }
 }
 
 void MTCommandContext::SetComputePSO(MTComputePSO* pipelineState)
@@ -625,6 +658,14 @@ void MTCommandContext::SubmitRenderEncoderState()
         else
             [renderEncoder_ setStencilReferenceValue:renderEncoderState_.stencilFrontRef];
     }
+    if (contextState_.visBuffer != nil && (renderDirtyBits_ & DirtyBit_VisibilityResultMode) != 0)
+    {
+        /* Set visibility result mode and offset */
+        [renderEncoder_
+            setVisibilityResultMode:    renderEncoderState_.visResultMode
+            offset:                     renderEncoderState_.visResultOffset
+        ];
+    }
 
     /* Reset all dirty bits */
     renderDirtyBits_ = 0;
@@ -632,11 +673,13 @@ void MTCommandContext::SubmitRenderEncoderState()
 
 void MTCommandContext::ResetRenderEncoderState()
 {
-    renderEncoderState_.viewportCount             = 0;
-    renderEncoderState_.scissorRectCount          = 0;
-    renderEncoderState_.vertexBufferRange.length  = 0;
-    renderEncoderState_.graphicsPSO               = nullptr;
-    renderEncoderState_.graphicsResourceHeap      = nullptr;
+    renderEncoderState_.viewportCount               = 0;
+    renderEncoderState_.scissorRectCount            = 0;
+    renderEncoderState_.vertexBufferRange.length    = 0;
+    renderEncoderState_.graphicsPSO                 = nullptr;
+    renderEncoderState_.graphicsResourceHeap        = nullptr;
+    renderEncoderState_.visResultMode               = MTLVisibilityResultModeDisabled;
+    renderEncoderState_.visResultOffset             = 0;
 }
 
 void MTCommandContext::SubmitComputeEncoderState()
@@ -674,6 +717,7 @@ void MTCommandContext::ResetContextState()
     contextState_.numPatchControlPoints = 0;
     contextState_.tessPipelineState     = nil;
     contextState_.boundPipelineState    = nullptr;
+    contextState_.visBuffer             = nil;
 }
 
 NSUInteger MTCommandContext::GetMaxLocalThreads(id<MTLComputePipelineState> computePSO) const

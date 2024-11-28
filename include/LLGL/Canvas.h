@@ -13,6 +13,7 @@
 #include <LLGL/Surface.h>
 #include <LLGL/Types.h>
 #include <LLGL/Key.h>
+#include <LLGL/Deprecated.h>
 #include <memory>
 
 
@@ -43,14 +44,18 @@ class LLGL_EXPORT Canvas : public Surface
 
                 friend class Canvas;
 
-                /**
-                \brief Sent when the canvas is about to quit.
-                \param[in] sender Specifies the sender of this event.
-                \param[out] veto Specifies whether to cancel the quit event.
-                If set to true, the call to \c PostQuit does not change the state \c sender, only the event listeners get informed.
-                If no event listener sets this parameter to true, \c sender is set into 'Quit' state.
-                */
+                //! \deprecated Since 0.04b; Use OnDestroy instead to detect when the canvas is about to be destroyed!
+                LLGL_DEPRECATED("Deprecated since 0.04b; Use OnDestroy instead!", "OnDestroy")
                 virtual void OnQuit(Canvas& sender, bool& veto);
+
+                //! Sent when the canvas is initialized or re-initialized.
+                virtual void OnInit(Canvas& sender);
+
+                /**
+                \brief Sent when the canvas' native object is about to be destroyed.
+                \remarks The Canvas instance itself may still remain active and receive a subsequent OnInit event to re-initialize the native object.
+                */
+                virtual void OnDestroy(Canvas& sender);
 
                 /**
                 \brief Sent when the canvas must redraw its content.
@@ -64,8 +69,18 @@ class LLGL_EXPORT Canvas : public Surface
                 //! Sent when a tap gesture has been recognized only including the location within the canvas.
                 virtual void OnTapGesture(Canvas& sender, const Offset2D& position, std::uint32_t numTouches);
 
-                //! Sent when a pan gesture has been recognized. Includes X and Y deltas for movement.
+                //! \deprecated Since 0.04b; Use the second version of OnPanGesture() with the EventAction parameter instead!
+                LLGL_DEPRECATED("This version of OnPanGesture() is deprecated since 0.04b; Use the second version with the EventAction parameter instead!")
                 virtual void OnPanGesture(Canvas& sender, const Offset2D& position, std::uint32_t numTouches, float dx, float dy);
+
+                //! Sent when a pan gesture has been recognized. Includes X and Y deltas for movement.
+                virtual void OnPanGesture(Canvas& sender, const Offset2D& position, std::uint32_t numTouches, float dx, float dy, EventAction action);
+
+                //! Sent when a key (from device button) has been pushed.
+                virtual void OnKeyDown(Canvas& sender, Key keyCode);
+
+                //! Sent when a key (from device button) has been released.
+                virtual void OnKeyUp(Canvas& sender, Key keyCode);
 
         };
 
@@ -93,10 +108,8 @@ class LLGL_EXPORT Canvas : public Surface
 
     public:
 
-        /**
-        \brief Returns true if this canvas is in the 'Quit' state.
-        \see PostQuit
-        */
+        //! \deprecated Since 0.04b; Write a custom 'quit' state for your app instead!
+        LLGL_DEPRECATED("Deprecated since 0.04b; Use a custom state instead!")
         virtual bool HasQuit() const;
 
         //! This default implementation ignores the video mode descriptor completely and always return false.
@@ -125,13 +138,25 @@ class LLGL_EXPORT Canvas : public Surface
         //! Removes the specified event listener from this canvas.
         void RemoveEventListener(const EventListener* eventListener);
 
-        /**
-        \brief Posts a 'Quit' event to all event listeners.
-        \remarks If any of the event listener sets the \c veto flag to false within the \c OnQuit callback, the canvas will \e not be put into 'Quit' state.
-        \see EventListener::OnQuit
-        \see HasQuit
-        */
+        //! \deprecated Since 0.04b; Use PostDestroy instead.
+        LLGL_DEPRECATED("Deprecated since 0.04b; Use PostDestroy instead to signal the canvas is about to be destroyed.", "PostDestroy")
         void PostQuit();
+
+        /**
+        \brief Posts a signal that the canvas is initialized or re-initialized.
+        \remarks A canvas can not only be initialized when the app is launched, but also when the app is resumed, although this is platform dependent.
+        On Android, this will be signaled on the \c APP_CMD_INIT_WINDOW command.
+        \see EventListener::OnInit
+        */
+        void PostInit();
+
+        /**
+        \brief Posts a signal that the canvas is about to be destroyed.
+        \remarks A canvas can not only be destroyed when the app is about to close, but also when the app is paused, although this is platform dependent.
+        On Android, this will be signaled on the \c APP_CMD_TERM_WINDOW command.
+        \see EventListener::OnDestroy
+        */
+        void PostDestroy();
 
         /**
         \brief Posts a draw event to all event listeners.
@@ -151,11 +176,27 @@ class LLGL_EXPORT Canvas : public Surface
         */
         void PostTapGesture(const Offset2D& position, std::uint32_t numTouches);
 
+        //! \deprecated Since 0.04b; Use the second version of PostPanGesture() with the EventAction parameter instead!
+        LLGL_DEPRECATED("This version of PostPanGesture() is deprecated since 0.04b; Use the second version with the EventAction parameter instead!")
+        void PostPanGesture(const Offset2D& position, std::uint32_t numTouches, float dx, float dy);
+
         /**
         \brief Posts a pan gesture event to all event listeners.
         \see EventListener::OnPanGesture
         */
-        void PostPanGesture(const Offset2D& position, std::uint32_t numTouches, float dx, float dy);
+        void PostPanGesture(const Offset2D& position, std::uint32_t numTouches, float dx, float dy, EventAction action);
+
+        /**
+        \brief Posts a keycode event from a device button that has been pushed down.
+        \see EventListener::OnKeyDown
+        */
+        void PostKeyDown(Key keyCode);
+
+        /**
+        \brief Posts a keycode event from a device button that has been released.
+        \see EventListener::OnKeyUp
+        */
+        void PostKeyUp(Key keyCode);
 
     protected:
 

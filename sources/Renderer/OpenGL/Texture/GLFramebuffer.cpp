@@ -7,7 +7,7 @@
 
 #include "GLFramebuffer.h"
 #include "GLTexture.h"
-#include "../GLProfile.h"
+#include "../Profile/GLProfile.h"
 #include "../GLTypes.h"
 #include "../Ext/GLExtensions.h"
 #include "../Ext/GLExtensionRegistry.h"
@@ -93,7 +93,7 @@ bool GLFramebuffer::FramebufferParameters(
     GLint samples,
     GLint fixedSampleLocations)
 {
-    #ifdef GL_ARB_framebuffer_no_attachments
+    #if LLGL_GLEXT_FRAMEBUFFER_NO_ATTACHMENTS
     if (HasExtension(GLExt::ARB_framebuffer_no_attachments))
     {
         GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::Framebuffer, GetID());
@@ -104,7 +104,7 @@ bool GLFramebuffer::FramebufferParameters(
         glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_FIXED_SAMPLE_LOCATIONS, fixedSampleLocations);
         return true;
     }
-    #endif // /GL_ARB_framebuffer_no_attachments
+    #endif // /LLGL_GLEXT_FRAMEBUFFER_NO_ATTACHMENTS
     return false;
 }
 
@@ -116,12 +116,14 @@ void GLFramebuffer::AttachTexture(
     GLenum              target)
 {
     GLuint texID = texture.GetID();
+    #if LLGL_GLEXT_FRAMEBUFFER_OBJECT
     if (texture.IsRenderbuffer())
     {
         /* Attach renderbuffer to FBO */
         glFramebufferRenderbuffer(target, attachment, GL_RENDERBUFFER, texID);
     }
     else
+    #endif // /LLGL_GLEXT_FRAMEBUFFER_OBJECT
     {
         /* Attach texture to FBO */
         switch (texture.GetType())
@@ -138,6 +140,7 @@ void GLFramebuffer::AttachTexture(
             case TextureType::TextureCube:
                 GLProfile::FramebufferTexture2D(target, attachment, GLTypes::ToTextureCubeMap(static_cast<std::uint32_t>(arrayLayer)), texID, mipLevel);
                 break;
+            #if !LLGL_GL_ENABLE_OPENGL2X
             case TextureType::Texture1DArray:
             case TextureType::Texture2DArray:
             case TextureType::TextureCubeArray:
@@ -149,13 +152,22 @@ void GLFramebuffer::AttachTexture(
             case TextureType::Texture2DMSArray:
                 GLProfile::FramebufferTextureLayer(target, attachment, texID, 0, arrayLayer);
                 break;
+            #else // !LLGL_GL_ENABLE_OPENGL2X
+            default:
+                LLGL_TRAP_FEATURE_NOT_SUPPORTED("array- & multi-sampled textures");
+                break;
+            #endif // /!LLGL_GL_ENABLE_OPENGL2X
         }
     }
 }
 
 void GLFramebuffer::AttachRenderbuffer(GLenum attachment, GLuint renderbufferID)
 {
+    #if LLGL_GLEXT_FRAMEBUFFER_OBJECT
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, renderbufferID);
+    #else
+    LLGL_TRAP_FEATURE_NOT_SUPPORTED("renderbuffer");
+    #endif
 }
 
 void GLFramebuffer::Blit(GLint width, GLint height, GLenum mask)

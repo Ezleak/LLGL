@@ -43,7 +43,7 @@ Before any command can be encoded, the command buffer must be set into encode mo
 
 \remarks In a multi-threaded environment, all blit commands (e.g. CommandBuffer::UpdateBuffer, CommandBuffer::CopyBuffer etc.) <b>must not</b> be called simultaneously
 with the same source and/or destination resources even if their ranges do not collide.
-Depending on the backend, those resources might be transitioned into difference states during those commands.
+Depending on the backend, those resources might be transitioned into different states during those commands.
 The same applies to CommandBuffer::BeginRenderPass where the specified RenderTarget might be transitioned into rendering state.
 Binding resources (CommandBuffer::SetResource, CommandBuffer::SetResourceHeap) as well as vertex (CommandBuffer::SetVertexBuffer) and
 index streams (CommandBuffer::SetIndexBuffer) can be performed in a multi-threaded fashion with either the same or separate resources.
@@ -574,7 +574,7 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         To clear only a specific render-target color buffer, use the \c ClearAttachments function.
         Clearing a depth-stencil attachment while the active render target has no depth-stencil buffer is allowed but has no effect.
         For efficiency reasons, it is recommended to clear the render target attachments when a new render pass begins,
-        i.e. the clear values of the \c BeginRenderPass function should be prefered over this function.
+        i.e. the clear values of the \c BeginRenderPass function should be preferred over this function.
         For some render systems (e.g. Metal) this function forces the current render pass to stop and start again in order to clear the attachments.
 
         \see ClearFlags
@@ -593,7 +593,7 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \remarks To clear all color buffers with the same value, use the \c Clear function.
         Clearing a depth-stencil attachment while the active render target has no depth-stencil buffer is allowed but has no effect.
         For efficiency reasons, it is recommended to clear the render target attachments when a new render pass begins,
-        i.e. the clear values of the \c BeginRenderPass function should be prefered over this function.
+        i.e. the clear values of the \c BeginRenderPass function should be preferred over this function.
         For some render systems (e.g. Metal) this function forces the current render pass to stop and start again in order to clear the attachments.
 
         \see Clear
@@ -853,8 +853,8 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \param[in] buffer Specifies the buffer from which the draw command arguments are taken. This buffer must have been created with the BindFlags::IndirectBuffer binding flag.
         \param[in] offset Specifies an offset within the argument buffer from which the arguments are to be taken. This offset must be a multiple of 4.
         \param[in] numCommands Specifies the number of draw commands that are to be taken from the argument buffer.
-        \param[in] stride Specifies the stride (in bytes) betweeen consecutive sets of arguments,
-        which is commonly greater than or euqal to <code>sizeof(DrawIndirectArguments)</code>. This stride must be a multiple of 4.
+        \param[in] stride Specifies the stride (in bytes) between consecutive sets of arguments,
+        which is commonly greater than or equal to <code>sizeof(DrawIndirectArguments)</code>. This stride must be a multiple of 4.
 
         \remarks This is also known as a "multi draw command" which is only natively supported by OpenGL and Vulkan.
         For other rendering APIs, the recording of multiple draw commands is emulated with a simple loop, which is equivalent to the following example:
@@ -885,8 +885,8 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \param[in] buffer Specifies the buffer from which the draw command arguments are taken. This buffer must have been created with the BindFlags::IndirectBuffer binding flag.
         \param[in] offset Specifies an offset within the argument buffer from which the arguments are to be taken. This offset must be a multiple of 4.
         \param[in] numCommands Specifies the number of draw commands that are to be taken from the argument buffer.
-        \param[in] stride Specifies the stride (in bytes) betweeen consecutive sets of arguments,
-        which is commonly greater than or euqal to <code>sizeof(DrawIndexedIndirectArguments)</code>. This stride must be a multiple of 4.
+        \param[in] stride Specifies the stride (in bytes) between consecutive sets of arguments,
+        which is commonly greater than or equal to <code>sizeof(DrawIndexedIndirectArguments)</code>. This stride must be a multiple of 4.
 
         \remarks This is also known as a "multi draw command" which is only natively supported by OpenGL and Vulkan.
         For other rendering APIs, the recording of multiple draw commands is emulated with a simple loop, which is equivalent to the following example:
@@ -901,6 +901,18 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \see DrawIndexedIndirectArguments
         */
         virtual void DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride) = 0;
+
+        /**
+        \brief Performs an automatic draw command whose number of primitives is provided by a stream-output buffer that is bound to the input assembler stage.
+
+        \remarks This command only supports a single vertex buffer in the input assembler stage
+        and it must have been created with the BindFlags::VertexBuffer and BindFlags::StreamOutputBuffer binding flags.
+
+        \remarks This can be used to pre-transform vertices and render the output later one or multiple times.
+
+        \see RenderingFeatures::hasStreamOutputs
+        */
+        virtual void DrawStreamOutput() = 0;
 
         /* ----- Compute ----- */
 
@@ -961,7 +973,7 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \brief Performs a native command that is backend specific.
 
         \param[out] nativeCommand Raw pointer to the backend specific structure to store the native command.
-        Optain the respective structure from <code>#include <LLGL/Backend/BACKEND/NativeCommand.h></code>
+        Obtain the respective structure from <code>#include <LLGL/Backend/BACKEND/NativeCommand.h></code>
         where \c BACKEND must be either \c Direct3D12, \c Direct3D11, \c Vulkan, \c Metal, or \c OpenGL.
 
         \param[in] nativeCommandSize Specifies the size (in bytes) of the native command structure for robustness.
@@ -989,7 +1001,7 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
         \brief Returns the native command buffer handle.
 
         \param[out] nativeHandle Raw pointer to the backend specific structure to store the native handle.
-        Optain the respective structure from <code>#include <LLGL/Backend/BACKEND/NativeHandle.h></code>
+        Obtain the respective structure from <code>#include <LLGL/Backend/BACKEND/NativeHandle.h></code>
         where \c BACKEND must be either \c Direct3D12, \c Direct3D11, \c Vulkan, or \c Metal.
         OpenGL does not have a native handle as it uses the current platform specific GL context.
 

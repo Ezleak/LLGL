@@ -6,6 +6,7 @@
  */
 
 #include "AndroidApp.h"
+#include "AndroidInputEventHandler.h"
 #include "../../Core/Assertion.h"
 #include <thread>
 
@@ -24,7 +25,17 @@ struct AndroidAppInit
     bool                isContentReady;
 };
 
-static void AndroidAppCmdCallback(android_app* app, int32_t cmd)
+static void AndroidAppLoopCmdCallback(android_app* app, int32_t cmd)
+{
+    AndroidInputEventHandler::Get().BroadcastCommand(app, cmd);
+}
+
+static std::int32_t AndroidAppLoopInputEventCallback(android_app* app, AInputEvent* event)
+{
+    return AndroidInputEventHandler::Get().BroadcastInputEvent(app, event);
+}
+
+static void AndroidAppInitCmdCallback(android_app* app, int32_t cmd)
 {
     AndroidAppInit* init = reinterpret_cast<AndroidAppInit*>(app->userData);
 
@@ -59,7 +70,7 @@ static void WaitUntilNativeWindowIsInitialized(android_app* app)
 
     /* Poll all Android app events */
     app->userData = reinterpret_cast<void*>(&init);
-    app->onAppCmd = AndroidAppCmdCallback;
+    app->onAppCmd = AndroidAppInitCmdCallback;
 
     int ident = 0, events = 0;
     android_poll_source* source = nullptr;
@@ -83,9 +94,18 @@ static void WaitUntilNativeWindowIsInitialized(android_app* app)
         }
     }
 
-    /* Restore client data */
-    app->userData = init.clientUserData;
-    app->onAppCmd = init.clientOnAppCmd;
+    if (init.clientOnAppCmd != nullptr)
+    {
+        /* Restore client data if it was previously specified */
+        app->userData = init.clientUserData;
+        app->onAppCmd = init.clientOnAppCmd;
+    }
+    else
+    {
+        /* ... Otherwise, use LLGL specific callback to handle window resize/rotation */
+        app->userData = nullptr;
+        app->onAppCmd = AndroidAppLoopCmdCallback;
+    }
 }
 
 AndroidApp& AndroidApp::Get()
@@ -103,6 +123,24 @@ void AndroidApp::Initialize(android_app* state)
         /* Process events until native window is initialized (APP_CMD_INIT_WINDOW) */
         WaitUntilNativeWindowIsInitialized(state);
     }
+    if (state_->onInputEvent == nullptr)
+    {
+        /* Set default event handler */
+        state_->onInputEvent = AndroidAppLoopInputEventCallback;
+    }
+}
+
+Extent2D AndroidApp::GetContentRectSize(android_app* appState)
+{
+    if (appState != nullptr)
+    {
+        return Extent2D
+        {
+            static_cast<std::uint32_t>(appState->contentRect.right - appState->contentRect.left),
+            static_cast<std::uint32_t>(appState->contentRect.bottom - appState->contentRect.top)
+        };
+    }
+    return Extent2D{};
 }
 
 

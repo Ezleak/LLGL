@@ -36,7 +36,7 @@ enum class ReportType
     Default = 0,
 
     /**
-    \brief Error message type. Usualyl forwarded to \c stderr \c std::cerr.
+    \brief Error message type. Usually forwarded to \c stderr or \c std::cerr.
     \see Errorf.
     */
     Error,
@@ -115,7 +115,7 @@ this function only returns the previously registered handle that is associated w
 LLGL_EXPORT LogHandle RegisterCallbackStd();
 
 /**
-\brief Unregisteres the specified handle from the log output.
+\brief Unregisters the specified handle from the log output.
 \param[in] handle Specifies the opaque handle that was returned from a previous call to RegisterCallback, RegisterCallbackReport, or RegisterCallbackStd.
 \see RegisterCallback
 \see RegisterCallbackReport

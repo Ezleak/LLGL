@@ -16,6 +16,8 @@ namespace LLGL
 {
 
 
+#if LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
+
 class GLSeparableShader;
 
 class GLProgramPipeline final : public GLShaderPipeline
@@ -44,6 +46,27 @@ class GLProgramPipeline final : public GLShaderPipeline
         GLSeparableShader* separableShaders_[LLGL_MAX_NUM_GL_SHADERS_PER_PIPELINE] = {};
 
 };
+
+#else // LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
+
+class GLProgramPipeline final : public GLShaderPipeline
+{
+
+    public:
+
+        GLProgramPipeline(
+            std::size_t             numShaders,
+            Shader* const*          shaders,
+            GLShader::Permutation   permutation = GLShader::PermutationDefault
+        );
+
+        void Bind(GLStateManager& stateMngr) override;
+        void BindResourceSlots(const GLShaderBindingLayout& bindingLayout) override;
+        void QueryInfoLogs(Report& report) override;
+
+};
+
+#endif // /LLGL_GLEXT_SEPARATE_SHADER_OBJECTS
 
 
 } // /namespace LLGL

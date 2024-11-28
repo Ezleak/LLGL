@@ -10,11 +10,14 @@
 #include "../GLObjectUtils.h"
 #include "../Ext/GLExtensions.h"
 #include "../RenderState/GLStateManager.h"
+#include "../../../Core/Exception.h"
 
 
 namespace LLGL
 {
 
+
+#if LLGL_GLEXT_SAMPLER_OBJECTS
 
 GLSampler::GLSampler(const char* debugName)
 {
@@ -73,10 +76,34 @@ void GLSampler::SamplerParameters(const SamplerDescriptor& desc)
         glSamplerParameteri(id_, GL_TEXTURE_COMPARE_MODE, GL_NONE);
 
     /* Set border color */
-    #ifdef LLGL_SAMPLER_BORDER_COLOR
+    #if LLGL_SAMPLER_BORDER_COLOR
     glSamplerParameterfv(id_, GL_TEXTURE_BORDER_COLOR, desc.borderColor);
     #endif
 }
+
+#else // LLGL_GLEXT_SAMPLER_OBJECTS
+
+GLSampler::GLSampler(const char* debugName)
+{
+    LLGL_TRAP_FEATURE_NOT_SUPPORTED("GL_ARB_sampler_objects");
+}
+
+GLSampler::~GLSampler()
+{
+    // dummy
+}
+
+void GLSampler::SetDebugName(const char* name)
+{
+    // dummy
+}
+
+void GLSampler::SamplerParameters(const SamplerDescriptor& desc)
+{
+    // dummy
+}
+
+#endif // /LLGL_GLEXT_SAMPLER_OBJECTS
 
 
 } // /namespace LLGL

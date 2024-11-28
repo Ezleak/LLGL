@@ -8,8 +8,17 @@
 #include <ExampleBase.h>
 #include <FileUtils.h>
 #include <LLGL/Utils/TypeNames.h>
+#include <ImageReader.h>
 #include <DDSImageReader.h>
-#include <stb/stb_image.h>
+#include <LLGL/Platform/Platform.h>
+
+#if defined(LLGL_OS_ANDROID) || defined(LLGL_OS_IOS) || defined(LLGL_OS_WASM)
+#   define LLGLEXAMPLE_MOBILE 1
+#endif
+
+#if !LLGLEXAMPLE_MOBILE
+#   define ENABLE_COMPRESSED_TEXTURE_DDX 1
+#endif
 
 
 class Example_Texturing : public ExampleBase
@@ -54,9 +63,12 @@ public:
         CreateSamplers();
 
         // Print some information on the standard output
-        std::cout << "press TAB KEY to switch between five different texture samplers" << std::endl;
-        std::cout << "texture: " << resourceLabels[0] << "\r";
-        std::flush(std::cout);
+        LLGL::Log::Printf(
+            "press TAB KEY to switch between five different texture samplers\n"
+            "texture: %s\r",
+            resourceLabels[0]
+        );
+        ::fflush(stdout);
     }
 
     LLGL::VertexFormat CreateBuffers()
@@ -111,29 +123,11 @@ public:
     void LoadUncompressedTexture(const std::string& filename)
     {
         // Load image data from file (using STBI library, see http://nothings.org/stb_image.h)
-        int texWidth = 0, texHeight = 0, texComponents = 0;
-
-        const std::string path = FindResourcePath(filename);
-
-        unsigned char* imageBuffer = stbi_load(path.c_str(), &texWidth, &texHeight, &texComponents, 0);
-        if (!imageBuffer)
-            throw std::runtime_error("failed to load image from file: " + path);
+        ImageReader reader;
+        reader.LoadFromFile(filename);
 
         // Initialize source image descriptor to upload image data onto hardware texture
-        LLGL::ImageView imageView;
-        {
-            // Set image color format
-            imageView.format    = (texComponents == 4 ? LLGL::ImageFormat::RGBA : LLGL::ImageFormat::RGB);
-
-            // Set image data type (unsigned char = 8-bit unsigned integer)
-            imageView.dataType  = LLGL::DataType::UInt8;
-
-            // Set image buffer source for texture initial data
-            imageView.data      = imageBuffer;
-
-            // Set image buffer size
-            imageView.dataSize  = static_cast<std::size_t>(texWidth*texHeight*texComponents);
-        }
+        LLGL::ImageView imageView = reader.GetImageView();
 
         // Upload image data onto hardware texture and stop the time
         timer.Start();
@@ -145,21 +139,18 @@ public:
                 texDesc.type        = LLGL::TextureType::Texture2D;
 
                 // Texture hardware format: RGBA with normalized 8-bit unsigned char type
-                texDesc.format      = LLGL::Format::BGRA8UNorm;//RGBA8UNorm; //BGRA8UNorm
+                texDesc.format      = LLGL::Format::RGBA8UNorm; //BGRA8UNorm
 
                 // Texture size
-                texDesc.extent      = { static_cast<std::uint32_t>(texWidth), static_cast<std::uint32_t>(texHeight), 1u };
+                texDesc.extent      = reader.GetTextureDesc().extent;
 
                 // Generate all MIP-map levels for this texture
                 texDesc.miscFlags   = LLGL::MiscFlags::GenerateMips;
             }
             colorMaps[1] = renderer->CreateTexture(texDesc, &imageView);
         }
-        auto texCreationTime = static_cast<double>(timer.Stop()) / static_cast<double>(timer.GetFrequency());
-        std::cout << "texture creation time: " << (texCreationTime * 1000.0) << " ms" << std::endl;
-
-        // Release image data
-        stbi_image_free(imageBuffer);
+        double texCreationTime = static_cast<double>(timer.Stop()) / static_cast<double>(timer.GetFrequency());
+        LLGL::Log::Printf("texture creation time: %f ms\n", texCreationTime * 1000.0);
     }
 
     void LoadCompressedTexture(const std::string& filename)
@@ -197,8 +188,13 @@ public:
 
     void CreateTextures()
     {
+        #if ENABLE_COMPRESSED_TEXTURE_DDX
         LoadCompressedTexture("Crate-DXT1-MipMapped.dds");
         LoadUncompressedTexture("Crate.jpg");
+        #else
+        LoadUncompressedTexture("Crate.jpg");
+        colorMaps[0] = colorMaps[1];
+        #endif
     }
 
     void CreateSamplers()
@@ -236,12 +232,22 @@ private:
         if (input.KeyDown(LLGL::Key::Tab))
         {
             // Switch to next resource we want to present
+#if LLGLEXAMPLE_MOBILE
+            resourceIndex = 3 - resourceIndex;
+#else
             if (input.KeyPressed(LLGL::Key::Shift))
                 resourceIndex = ((resourceIndex - 1) % 4 + 4) % 4;
             else
                 resourceIndex = (resourceIndex + 1) % 4;
-            std::cout << "texture: " << resourceLabels[resourceIndex] << std::string(30, ' ') << "\r";
-            std::flush(std::cout);
+#endif
+
+            const std::string spaces(30, ' ');
+            LLGL::Log::Printf(
+                "texture: %s%s\r",
+                resourceLabels[resourceIndex],
+                spaces.c_str()
+            );
+            ::fflush(stdout);
         }
 
         // Update scene constants

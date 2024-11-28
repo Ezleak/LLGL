@@ -54,6 +54,7 @@ void D3D11BindingTable::SetVertexBuffers(
     {
         for_range(i, count)
         {
+            LLGL_ASSERT_PTR(locators[i]);
             if (locators[i]->type == D3D11BindingLocator::D3DLocator_RWBuffer)
             {
                 EvictAllOutputBindings(locators[i]);
@@ -116,6 +117,7 @@ void D3D11BindingTable::SetShaderResourceViews(
         {
             for_range(i, count)
             {
+                LLGL_ASSERT_PTR(locators[i]);
                 if (locators[i]->type != D3D11BindingLocator::D3DLocator_ReadOnly)
                 {
                     EvictAllOutputBindings(locators[i], &subresourceRanges[i]);
@@ -133,6 +135,7 @@ void D3D11BindingTable::SetShaderResourceViews(
             const D3D11SubresourceRange fullRange{ 0u, ~0u };
             for_range(i, count)
             {
+                LLGL_ASSERT_PTR(locators[i]);
                 if (locators[i]->type != D3D11BindingLocator::D3DLocator_ReadOnly)
                 {
                     EvictAllOutputBindings(locators[i]);
@@ -170,6 +173,7 @@ void D3D11BindingTable::SetUnorderedAccessViews(
         {
             for_range(i, count)
             {
+                LLGL_ASSERT_PTR(locators[i]);
                 if (locators[i]->type != D3D11BindingLocator::D3DLocator_ReadOnly)
                 {
                     EvictAllBindings(locators[i], &subresourceRanges[i]);
@@ -183,6 +187,7 @@ void D3D11BindingTable::SetUnorderedAccessViews(
             const D3D11SubresourceRange fullRange{ 0u, ~0u };
             for_range(i, count)
             {
+                LLGL_ASSERT_PTR(locators[i]);
                 if (locators[i]->type != D3D11BindingLocator::D3DLocator_ReadOnly)
                 {
                     EvictAllBindings(locators[i]);
@@ -225,7 +230,10 @@ void D3D11BindingTable::SetRenderTargets(
     {
         LLGL_ASSERT_PTR(renderTargetSubresourceRanges);
         for_range(slot, count)
-            EvictAllBindings(renderTargetLocators[slot], renderTargetSubresourceRanges);
+        {
+            if (D3D11BindingLocator* locator = renderTargetLocators[slot])
+                EvictAllBindings(locator, renderTargetSubresourceRanges);
+        }
         rtvCount_ = count;
     }
     else
@@ -241,6 +249,7 @@ void D3D11BindingTable::SetRenderTargets(
 
 void D3D11BindingTable::ClearState()
 {
+    /* Clear binding locators from all tables */
     ClearBindingLocators(vb_);
     ClearBindingLocators(ib_);
     ClearBindingLocators(srvVS_);
@@ -271,16 +280,23 @@ void D3D11BindingTable::FlushOutputMergerUAVs()
     }
 }
 
+void D3D11BindingTable::NotifyResourceRelease(D3D11BindingLocator* locator)
+{
+    /* When a resource is about to be released, evict all of its bindings from this binding table */
+    EvictAllBindings(locator);
+}
+
 
 /*
  * ======= Private: =======
  */
 
+static void* const g_nullArray[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+
 template <typename T>
 static T* const* GetNullPointerArray()
 {
-    static void* const nullArray[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
-    return reinterpret_cast<T* const*>(nullArray);
+    return reinterpret_cast<T* const*>(g_nullArray);
 }
 
 void D3D11BindingTable::InsertInput(D3D11BindingLocator** container, D3D11BindingLocator::D3DInputs input, UINT slot, D3D11BindingLocator* locator)

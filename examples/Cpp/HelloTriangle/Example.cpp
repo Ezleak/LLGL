@@ -14,7 +14,7 @@
 #define ENABLE_MULTISAMPLING    1
 
 // Enable caching of pipeline state objects (PSO)
-//#define ENABLE_CACHED_PSO       1
+#define ENABLE_CACHED_PSO       0
 
 #ifdef LLGL_OS_ANDROID
 #define EXIT(VAL) return
@@ -76,13 +76,18 @@ int main(int argc, char* argv[])
             "Vendor:               %s\n"
             "Shading Language:     %s\n"
             "Swap Chain Format:    %s\n"
-            "Depth/Stencil Format: %s\n",
+            "Depth/Stencil Format: %s\n"
+            "Resolution:           %u x %u\n"
+            "Samples:              %u\n",
             info.rendererName.c_str(),
             info.deviceName.c_str(),
             info.vendorName.c_str(),
             info.shadingLanguageName.c_str(),
             LLGL::ToString(swapChain->GetColorFormat()),
-            LLGL::ToString(swapChain->GetDepthStencilFormat())
+            LLGL::ToString(swapChain->GetDepthStencilFormat()),
+            swapChain->GetResolution().width,
+            swapChain->GetResolution().height,
+            swapChain->GetSamples()
         );
 
         // Enable V-sync

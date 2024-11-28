@@ -17,7 +17,6 @@ namespace LLGL
 struct Canvas::Pimpl
 {
     std::vector<std::shared_ptr<EventListener>> eventListeners;
-    bool                                        quit            = false;
     void*                                       userData        = nullptr;
 };
 
@@ -35,6 +34,16 @@ Canvas::~Canvas()
 /* ----- Canvas EventListener class ----- */
 
 void Canvas::EventListener::OnQuit(Canvas& sender, bool& veto)
+{
+    // deprecated
+}
+
+void Canvas::EventListener::OnInit(Canvas& sender)
+{
+    // dummy
+}
+
+void Canvas::EventListener::OnDestroy(Canvas& sender)
 {
     // dummy
 }
@@ -54,7 +63,27 @@ void Canvas::EventListener::OnTapGesture(Canvas& sender, const Offset2D& positio
     // dummy
 }
 
+LLGL_DEPRECATED_IGNORE_PUSH()
+
+//deprecated
 void Canvas::EventListener::OnPanGesture(Canvas& sender, const Offset2D& position, std::uint32_t numTouches, float dx, float dy)
+{
+    // dummy
+}
+
+void Canvas::EventListener::OnPanGesture(Canvas& sender, const Offset2D& position, std::uint32_t numTouches, float dx, float dy, EventAction action)
+{
+    OnPanGesture(sender, position, numTouches, dx, dy); // forward call to deprecated function until it's removed
+}
+
+LLGL_DEPRECATED_IGNORE_POP()
+
+void Canvas::EventListener::OnKeyDown(Canvas& sender, Key keyCode)
+{
+    // dummy
+}
+
+void Canvas::EventListener::OnKeyUp(Canvas& sender, Key keyCode)
 {
     // dummy
 }
@@ -77,7 +106,7 @@ std::unique_ptr<Canvas> Canvas::Create(const CanvasDescriptor& desc)
 
 bool Canvas::HasQuit() const
 {
-    return pimpl_->quit;
+    return false; // deprecated
 }
 
 bool Canvas::AdaptForVideoMode(Extent2D* resolution, bool* fullscreen)
@@ -113,17 +142,17 @@ void Canvas::RemoveEventListener(const EventListener* eventListener)
 
 void Canvas::PostQuit()
 {
-    if (!HasQuit())
-    {
-        bool canQuit = true;
-        for (const auto& lst : pimpl_->eventListeners)
-        {
-            bool veto = false;
-            lst->OnQuit(*this, veto);
-            canQuit = (canQuit && !veto);
-        }
-        pimpl_->quit = canQuit;
-    }
+    // deprecated
+}
+
+void Canvas::PostInit()
+{
+    FOREACH_LISTENER_CALL( OnInit(*this) );
+}
+
+void Canvas::PostDestroy()
+{
+    FOREACH_LISTENER_CALL( OnDestroy(*this) );
 }
 
 void Canvas::PostDraw()
@@ -141,9 +170,25 @@ void Canvas::PostTapGesture(const Offset2D& position, std::uint32_t numTouches)
     FOREACH_LISTENER_CALL( OnTapGesture(*this, position, numTouches) );
 }
 
+//deprecated
 void Canvas::PostPanGesture(const Offset2D& position, std::uint32_t numTouches, float dx, float dy)
 {
-    FOREACH_LISTENER_CALL( OnPanGesture(*this, position, numTouches, dx, dy) );
+    PostPanGesture(position, numTouches, dx, dy, EventAction::Changed); // forward call to new version until this version is removed
+}
+
+void Canvas::PostPanGesture(const Offset2D& position, std::uint32_t numTouches, float dx, float dy, EventAction action)
+{
+    FOREACH_LISTENER_CALL( OnPanGesture(*this, position, numTouches, dx, dy, action) );
+}
+
+void Canvas::PostKeyDown(Key keyCode)
+{
+    FOREACH_LISTENER_CALL( OnKeyDown(*this, keyCode) );
+}
+
+void Canvas::PostKeyUp(Key keyCode)
+{
+    FOREACH_LISTENER_CALL( OnKeyUp(*this, keyCode) );
 }
 
 #undef FOREACH_LISTENER_CALL

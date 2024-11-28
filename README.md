@@ -2,8 +2,7 @@
 
 <p align="center">
     <a href="https://github.com/LukasBanana/LLGL/blob/master/LICENSE.txt"><img alt="License" src="https://img.shields.io/badge/license-BSD--3%20clause-blue.svg" /></a>
-    <a href="https://app.codacy.com/gh/LukasBanana/LLGL/dashboard"><img src="https://api.codacy.com/project/badge/Grade/53e975cd13834e78bbb6120287a5f4d8"/></a>
-    <a href="https://gitter.im/LLGL-Project/community"><img alt="Join the chat at https://gitter.im/LLGL-Project/community" src="https://badges.gitter.im/LLGL-Project/LLGL.svg" /></a>
+    <a href="https://discord.com/channels/1257440130021457941"><img alt="Discord" src="https://img.shields.io/discord/1257440130021457941?logo=discord&logoColor=white"></a?>
 </p>
 
 <p align="center"><img src="docu/LLGL_Logo.png"/></p>
@@ -13,7 +12,7 @@
 
 LLGL aims to be a thin abstraction layer for a wide variety of modern and legacy rendering APIs as well as a multitude of platforms targeting both desktop and mobile.
 LLGL provides close coupling with the underlying APIs for a rich feature set while also simplifying architectural hurdles.
-The library is written mostly in C++11 with the addition of a C99 and C# 6.0 wrapper.
+The library is written mostly in C++11 with the addition of a C99, C# 6.0, and Go wrapper.
 
 
 ## Documentation
@@ -23,21 +22,24 @@ The library is written mostly in C++11 with the addition of a C99 and C# 6.0 wra
 with Introduction, Hello Triangle Tutorial, and Extensibility Example with [GLFW](http://www.glfw.org/)
 - [LLGL Reference Manual](docu/refman.pdf) (PDF)
 - [LLGL Coding Conventions](docu/CodingConventions/Coding%20Conventions%20for%20LLGL.pdf) (PDF)
-- [Examples and Tutorials for C++](examples/Cpp)
-- [Examples for C99](examples/C99)
-- [Examples for C#](examples/CSharp)
+- [C++ Examples and Tutorials](examples/Cpp)
+- [C99 Examples](examples/C99)
+- [C# Examples](examples/CSharp)
+- [Go Examples](examples/Go)
+- [WebGL Examples](https://lukasbanana.github.io/LLGL/docu/WebPage)
 
 
 ## Platform Support
 
-| Platform | CI | D3D12 | D3D11 | Vulkan | GL/GLES3 | Metal |
-|----------|:--:|:-----:|:-----:|:------:|:--------:|:-----:|
+| Platform | CI | D3D12 | D3D11 | Vulkan | OpenGL | Metal |
+|----------|:--:|:-----:|:-----:|:------:|:------:|:-----:|
 | <img src="docu/Icons/windows.svg" height="20" /> Windows | <p>[![MSVC16+ CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_windows.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_windows.yml)</p> <p>[![MSVC14 CI](https://ci.appveyor.com/api/projects/status/j09x8n07u3byfky0?svg=true)](https://ci.appveyor.com/project/LukasBanana/llgl)</p> | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | N/A |
-| <img src="docu/Icons/windows.svg" height="20" /> UWP | [![UWP CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_uwp.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_uwp.yml) | :heavy_check_mark: | :heavy_check_mark: | N/A | N/A | N/A |
+| <img src="docu/Icons/uwp.svg" height="20" /> UWP | [![UWP CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_uwp.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_uwp.yml) | :heavy_check_mark: | :heavy_check_mark: | N/A | N/A | N/A |
 | <img src="docu/Icons/linux.svg" height="20" /> GNU/Linux | [![GNU/Linux CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_linux.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_linux.yml) | N/A | N/A | :heavy_check_mark: | :heavy_check_mark: | N/A |
 | <img src="docu/Icons/macos.svg" height="20" /> macOS | [![macOS CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_macos.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_macos.yml) | N/A | N/A | N/A | :heavy_check_mark: | :heavy_check_mark: |
 | <img src="docu/Icons/ios.svg" height="20" /> iOS | [![iOS CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_ios.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_ios.yml) | N/A | N/A | N/A | :heavy_check_mark: | :heavy_check_mark: |
-| <img src="docu/Icons/android.svg" height="20" /> Android | [![Android CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_android.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_android.yml) | N/A | N/A | :heavy_check_mark: | :heavy_check_mark: | N/A |
+| <img src="docu/Icons/android.svg" height="20" /> Android | [![Android CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_android.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_android.yml) | N/A | N/A | :construction: | :heavy_check_mark: | N/A |
+| <img src="docu/Icons/wasm.svg" height="20" /> Wasm | [![WebAssembly CI](https://github.com/LukasBanana/LLGL/actions/workflows/ci_wasm.yml/badge.svg)](https://github.com/LukasBanana/LLGL/actions/workflows/ci_wasm.yml) | N/A | N/A | N/A | :heavy_check_mark: | N/A |
 
 
 ## Build Notes
@@ -52,6 +54,7 @@ The Windows SDK is also required to build D3D11 and D3D12 backends.
 ### macOS, iOS
 
 [**Xcode 9**](https://developer.apple.com/xcode/) or later is required to build LLGL on macOS and iOS.
+For older Macs, there is a legacy mode to build LLGL for Mac OS X 10.6 using [MacPorts](https://www.macports.org/) of Clang.
 
 ### GNU/Linux
 
@@ -59,13 +62,10 @@ LLGL on GNU/Linux requires the development libraries for [X11](https://www.x.org
 
 ### Android
 
-The [Android NDK](https://developer.android.com/ndk) with at least API level 21 is required.
-The build script to generate project files is currently only supported on **GNU/Linux**
-and requires [CMake 3.10](https://cmake.org/) or later and the [Code::Blocks](http://www.codeblocks.org/) IDE.
+[Android NDK](https://developer.android.com/ndk) with at least API level 21 is required.
+The build script supports generating project files for [Android Studio](https://developer.android.com/studio).
 
-*This platform support is currently in an experimental state.*
-
-## Installing LuaBridge (vcpkg)
+## Installing (vcpkg)
 
 Alternatively, you can build and install LLGL using [vcpkg](https://github.com/Microsoft/vcpkg/) dependency manager:
 
