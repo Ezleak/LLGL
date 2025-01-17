@@ -65,6 +65,5 @@ jobs:
         name: LLGL-Android-${{ matrix.config }}-${{ matrix.abi }}
         path: |
           ${{ env.README }}
-          ${{ github.workspace }}/Android-${{ matrix.abi }}/build/libLLGL*.so
-          ${{ github.workspace }}/Android-${{ matrix.abi }}/build/libExample_*.so
+          ${{ github.workspace }}/Android-${{ matrix.abi }}/build
       
