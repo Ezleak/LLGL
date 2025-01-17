@@ -243,7 +243,6 @@ if(LLGL_BUILD_RENDERER_OPENGL)
     endif()
 
     set(OpenGL_GL_PREFERENCE GLVND)
-    find_package(OpenGL REQUIRED)
     if(OPENGL_FOUND)
         include_directories(${OPENGL_INCLUDE_DIR})
         
