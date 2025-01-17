@@ -35,6 +35,11 @@ jobs:
         ndk-version: r25c
         add-to-path: false
 
+    - name: 1
+      run: |
+        sudo apt update
+        sudo apt-get install libx11-dev libxrandr-dev libglu1-mesa-dev freeglut3-dev mesa-common-dev vulkan-sdk vulkan-tools
+
     - name: Configure CMake
       run: >
         cmake -S . -B ${{github.workspace}}/Android-${{ matrix.abi }}
