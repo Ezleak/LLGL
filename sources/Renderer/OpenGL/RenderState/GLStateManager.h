@@ -15,7 +15,6 @@
 #include <LLGL/CommandBufferFlags.h>
 #include "../OpenGL.h"
 #include "../../../Core/Assertion.h"
-#include <array>
 #include <stack>
 #include <cstdint>
 
@@ -228,9 +227,8 @@ class GLStateManager
         // Returns GL_TEXTURE_2D etc.
         static GLenum ToGLTextureTarget(const GLTextureTarget target);
 
-        void ActiveTexture(GLuint layer);
-
         void BindTexture(GLTextureTarget target, GLuint texture);
+        void BindTexture(GLuint layer, GLTextureTarget target, GLuint texture);
         void BindTextures(GLuint first, GLsizei count, const GLTextureTarget* targets, const GLuint* textures);
         void UnbindTextures(GLuint first, GLsizei count);
 
@@ -243,6 +241,7 @@ class GLStateManager
         void PopBoundTexture();
 
         void BindGLTexture(GLTexture& texture);
+        void BindGLTexture(GLuint layer, GLTexture& texture);
 
         void DeleteTexture(GLuint texture, GLTextureTarget target, bool invalidateActiveLayerOnly = false);
 

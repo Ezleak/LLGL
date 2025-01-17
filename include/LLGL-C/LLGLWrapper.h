@@ -871,6 +871,39 @@ typedef enum LLGLFormatFlags
 }
 LLGLFormatFlags;
 
+typedef enum LLGLStdOutFlags
+{
+    LLGLStdOutColored = (1 << 0),
+}
+LLGLStdOutFlags;
+
+typedef enum LLGLColorFlags
+{
+    LLGLColorDefault       = (1 << 0),
+    LLGLColorRed           = (1 << 1),
+    LLGLColorGreen         = (1 << 2),
+    LLGLColorBlue          = (1 << 3),
+    LLGLColorBright        = (1 << 4),
+    LLGLColorBold          = (1 << 5),
+    LLGLColorUnderline     = (1 << 6),
+    LLGLColorFullRGB       = (1 << 7),
+    LLGLColorYellow        = (LLGLColorRed | LLGLColorGreen),
+    LLGLColorPink          = (LLGLColorRed | LLGLColorBlue),
+    LLGLColorCyan          = (LLGLColorGreen | LLGLColorBlue),
+    LLGLColorGray          = (LLGLColorRed | LLGLColorGreen | LLGLColorBlue),
+    LLGLColorBrightRed     = (LLGLColorBright | LLGLColorRed),
+    LLGLColorBrightGreen   = (LLGLColorBright | LLGLColorGreen),
+    LLGLColorBrightBlue    = (LLGLColorBright | LLGLColorBlue),
+    LLGLColorBrightYellow  = (LLGLColorBright | LLGLColorYellow),
+    LLGLColorBrightPink    = (LLGLColorBright | LLGLColorPink),
+    LLGLColorBrightCyan    = (LLGLColorBright | LLGLColorCyan),
+    LLGLColorWhite         = (LLGLColorBright | LLGLColorGray),
+    LLGLColorStdError      = (LLGLColorBold | LLGLColorRed),
+    LLGLColorStdWarning    = (LLGLColorBold | LLGLColorBrightYellow),
+    LLGLColorStdAnnotation = (LLGLColorBold | LLGLColorBrightPink),
+}
+LLGLColorFlags;
+
 typedef enum LLGLBarrierFlags
 {
     LLGLBarrierStorageBuffer  = (1 << 0),
@@ -1004,7 +1037,7 @@ typedef struct LLGLCommandBufferDescriptor
 {
     const char*    debugName;          /* = NULL */
     long           flags;              /* = 0 */
-    uint32_t       numNativeBuffers;   /* = 2 */
+    uint32_t       numNativeBuffers;   /* = 0 */
     uint64_t       minStagingPoolSize; /* = (0xFFFF+1) */
     LLGLRenderPass renderPass;         /* = LLGL_NULL_OBJECT */
 }
@@ -1043,6 +1076,13 @@ typedef struct LLGLDispatchIndirectArguments
     uint32_t numThreadGroups[3];
 }
 LLGLDispatchIndirectArguments;
+
+typedef struct LLGLColorCodes
+{
+    long textFlags;       /* = 0 */
+    long backgroundFlags; /* = 0 */
+}
+LLGLColorCodes;
 
 typedef struct LLGLBindingSlot
 {
@@ -1376,6 +1416,15 @@ typedef struct LLGLUniformDescriptor
 }
 LLGLUniformDescriptor;
 
+typedef struct LLGLCombinedTextureSamplerDescriptor
+{
+    const char*     name;
+    const char*     textureName;
+    const char*     samplerName;
+    LLGLBindingSlot slot;
+}
+LLGLCombinedTextureSamplerDescriptor;
+
 typedef struct LLGLDepthDescriptor
 {
     bool          testEnabled;  /* = false */
@@ -1703,16 +1752,18 @@ LLGLTextureViewDescriptor;
 
 typedef struct LLGLPipelineLayoutDescriptor
 {
-    const char*                        debugName;         /* = NULL */
-    size_t                             numHeapBindings;   /* = 0 */
-    const LLGLBindingDescriptor*       heapBindings;      /* = NULL */
-    size_t                             numBindings;       /* = 0 */
-    const LLGLBindingDescriptor*       bindings;          /* = NULL */
-    size_t                             numStaticSamplers; /* = 0 */
-    const LLGLStaticSamplerDescriptor* staticSamplers;    /* = NULL */
-    size_t                             numUniforms;       /* = 0 */
-    const LLGLUniformDescriptor*       uniforms;          /* = NULL */
-    long                               barrierFlags;      /* = 0 */
+    const char*                                 debugName;                  /* = NULL */
+    size_t                                      numHeapBindings;            /* = 0 */
+    const LLGLBindingDescriptor*                heapBindings;               /* = NULL */
+    size_t                                      numBindings;                /* = 0 */
+    const LLGLBindingDescriptor*                bindings;                   /* = NULL */
+    size_t                                      numStaticSamplers;          /* = 0 */
+    const LLGLStaticSamplerDescriptor*          staticSamplers;             /* = NULL */
+    size_t                                      numUniforms;                /* = 0 */
+    const LLGLUniformDescriptor*                uniforms;                   /* = NULL */
+    size_t                                      numCombinedTextureSamplers; /* = 0 */
+    const LLGLCombinedTextureSamplerDescriptor* combinedTextureSamplers;    /* = NULL */
+    long                                        barrierFlags;               /* = 0 */
 }
 LLGLPipelineLayoutDescriptor;
 

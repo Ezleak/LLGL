@@ -829,6 +829,39 @@ namespace LLGL
     }
 
     [Flags]
+    public enum StdOutFlags : int
+    {
+        Colored = (1 << 0),
+    }
+
+    [Flags]
+    public enum ColorFlags : int
+    {
+        Default       = (1 << 0),
+        Red           = (1 << 1),
+        Green         = (1 << 2),
+        Blue          = (1 << 3),
+        Bright        = (1 << 4),
+        Bold          = (1 << 5),
+        Underline     = (1 << 6),
+        FullRGB       = (1 << 7),
+        Yellow        = (Red | Green),
+        Pink          = (Red | Blue),
+        Cyan          = (Green | Blue),
+        Gray          = (Red | Green | Blue),
+        BrightRed     = (Bright | Red),
+        BrightGreen   = (Bright | Green),
+        BrightBlue    = (Bright | Blue),
+        BrightYellow  = (Bright | Yellow),
+        BrightPink    = (Bright | Pink),
+        BrightCyan    = (Bright | Cyan),
+        White         = (Bright | Gray),
+        StdError      = (Bold | Red),
+        StdWarning    = (Bold | BrightYellow),
+        StdAnnotation = (Bold | BrightPink),
+    }
+
+    [Flags]
     public enum BarrierFlags : int
     {
         StorageBuffer  = (1 << 0),
@@ -1139,7 +1172,7 @@ namespace LLGL
     {
         public AnsiString         DebugName { get; set; }          = null;
         public CommandBufferFlags Flags { get; set; }              = 0;
-        public int                NumNativeBuffers { get; set; }   = 2;
+        public int                NumNativeBuffers { get; set; }   = 0;
         public long               MinStagingPoolSize { get; set; } = (0xFFFF+1);
         public RenderPass         RenderPass { get; set; }         = null;
 
@@ -1163,6 +1196,35 @@ namespace LLGL
                     }
                 }
                 return native;
+            }
+        }
+    }
+
+    public class ColorCodes
+    {
+        public ColorFlags TextFlags { get; set; }       = 0;
+        public ColorFlags BackgroundFlags { get; set; } = 0;
+
+        public ColorCodes() { }
+
+        internal ColorCodes(NativeLLGL.ColorCodes native)
+        {
+            Native = native;
+        }
+
+        internal NativeLLGL.ColorCodes Native
+        {
+            get
+            {
+                var native = new NativeLLGL.ColorCodes();
+                native.textFlags       = (int)TextFlags;
+                native.backgroundFlags = (int)BackgroundFlags;
+                return native;
+            }
+            set
+            {
+                TextFlags       = (ColorFlags)value.textFlags;
+                BackgroundFlags = (ColorFlags)value.backgroundFlags;
             }
         }
     }
@@ -1790,6 +1852,56 @@ namespace LLGL
                     Name      = Marshal.PtrToStringAnsi((IntPtr)value.name);
                     Type      = value.type;
                     ArraySize = value.arraySize;
+                }
+            }
+        }
+    }
+
+    public class CombinedTextureSamplerDescriptor
+    {
+        public AnsiString  Name { get; set; }
+        public AnsiString  TextureName { get; set; }
+        public AnsiString  SamplerName { get; set; }
+        public BindingSlot Slot { get; set; }        = new BindingSlot();
+
+        public CombinedTextureSamplerDescriptor() { }
+
+        internal CombinedTextureSamplerDescriptor(NativeLLGL.CombinedTextureSamplerDescriptor native)
+        {
+            Native = native;
+        }
+
+        internal NativeLLGL.CombinedTextureSamplerDescriptor Native
+        {
+            get
+            {
+                var native = new NativeLLGL.CombinedTextureSamplerDescriptor();
+                unsafe
+                {
+                    fixed (byte* namePtr = Name.Ascii)
+                    {
+                        native.name = namePtr;
+                    }
+                    fixed (byte* textureNamePtr = TextureName.Ascii)
+                    {
+                        native.textureName = textureNamePtr;
+                    }
+                    fixed (byte* samplerNamePtr = SamplerName.Ascii)
+                    {
+                        native.samplerName = samplerNamePtr;
+                    }
+                    native.slot        = Slot;
+                }
+                return native;
+            }
+            set
+            {
+                unsafe
+                {
+                    Name        = Marshal.PtrToStringAnsi((IntPtr)value.name);
+                    TextureName = Marshal.PtrToStringAnsi((IntPtr)value.textureName);
+                    SamplerName = Marshal.PtrToStringAnsi((IntPtr)value.samplerName);
+                    Slot        = value.slot;
                 }
             }
         }
@@ -2822,7 +2934,7 @@ namespace LLGL
 
     public class PipelineLayoutDescriptor
     {
-        public AnsiString                DebugName { get; set; }      = null;
+        public AnsiString                         DebugName { get; set; }               = null;
         private BindingDescriptor[] heapBindings;
         private NativeLLGL.BindingDescriptor[] heapBindingsNative;
         public BindingDescriptor[] HeapBindings
@@ -2939,7 +3051,36 @@ namespace LLGL
                 }
             }
         }
-        public BarrierFlags              BarrierFlags { get; set; }   = 0;
+        private CombinedTextureSamplerDescriptor[] combinedTextureSamplers;
+        private NativeLLGL.CombinedTextureSamplerDescriptor[] combinedTextureSamplersNative;
+        public CombinedTextureSamplerDescriptor[] CombinedTextureSamplers
+        {
+            get
+            {
+                return combinedTextureSamplers;
+            }
+            set
+            {
+                if (value != null)
+                {
+                    combinedTextureSamplers = value;
+                    combinedTextureSamplersNative = new NativeLLGL.CombinedTextureSamplerDescriptor[combinedTextureSamplers.Length];
+                    for (int combinedTextureSamplersIndex = 0; combinedTextureSamplersIndex < combinedTextureSamplers.Length; ++combinedTextureSamplersIndex)
+                    {
+                        if (combinedTextureSamplers[combinedTextureSamplersIndex] != null)
+                        {
+                            combinedTextureSamplersNative[combinedTextureSamplersIndex] = combinedTextureSamplers[combinedTextureSamplersIndex].Native;
+                        }
+                    }
+                }
+                else
+                {
+                    combinedTextureSamplers = null;
+                    combinedTextureSamplersNative = null;
+                }
+            }
+        }
+        public BarrierFlags                       BarrierFlags { get; set; }            = 0;
 
         internal NativeLLGL.PipelineLayoutDescriptor Native
         {
@@ -2984,7 +3125,15 @@ namespace LLGL
                             native.uniforms = uniformsPtr;
                         }
                     }
-                    native.barrierFlags   = (int)BarrierFlags;
+                    if (combinedTextureSamplers != null)
+                    {
+                        native.numCombinedTextureSamplers = (IntPtr)combinedTextureSamplers.Length;
+                        fixed (NativeLLGL.CombinedTextureSamplerDescriptor* combinedTextureSamplersPtr = combinedTextureSamplersNative)
+                        {
+                            native.combinedTextureSamplers = combinedTextureSamplersPtr;
+                        }
+                    }
+                    native.barrierFlags            = (int)BarrierFlags;
                 }
                 return native;
             }
@@ -3478,7 +3627,7 @@ namespace LLGL
         {
             public byte*      debugName;          /* = null */
             public int        flags;              /* = 0 */
-            public int        numNativeBuffers;   /* = 2 */
+            public int        numNativeBuffers;   /* = 0 */
             public long       minStagingPoolSize; /* = (0xFFFF+1) */
             public RenderPass renderPass;         /* = null */
         }
@@ -3486,6 +3635,12 @@ namespace LLGL
         public unsafe struct DispatchIndirectArguments
         {
             public fixed int numThreadGroups[3];
+        }
+
+        public unsafe struct ColorCodes
+        {
+            public int textFlags;       /* = 0 */
+            public int backgroundFlags; /* = 0 */
         }
 
         public unsafe struct DepthBiasDescriptor
@@ -3757,6 +3912,14 @@ namespace LLGL
             public byte*       name;
             public UniformType type;      /* = UniformType.Undefined */
             public int         arraySize; /* = 0 */
+        }
+
+        public unsafe struct CombinedTextureSamplerDescriptor
+        {
+            public byte*       name;
+            public byte*       textureName;
+            public byte*       samplerName;
+            public BindingSlot slot;
         }
 
         public unsafe struct DepthDescriptor
@@ -4079,16 +4242,18 @@ namespace LLGL
 
         public unsafe struct PipelineLayoutDescriptor
         {
-            public byte*                    debugName;         /* = null */
-            public IntPtr                   numHeapBindings;
-            public BindingDescriptor*       heapBindings;
-            public IntPtr                   numBindings;
-            public BindingDescriptor*       bindings;
-            public IntPtr                   numStaticSamplers;
-            public StaticSamplerDescriptor* staticSamplers;
-            public IntPtr                   numUniforms;
-            public UniformDescriptor*       uniforms;
-            public int                      barrierFlags;      /* = 0 */
+            public byte*                             debugName;                  /* = null */
+            public IntPtr                            numHeapBindings;
+            public BindingDescriptor*                heapBindings;
+            public IntPtr                            numBindings;
+            public BindingDescriptor*                bindings;
+            public IntPtr                            numStaticSamplers;
+            public StaticSamplerDescriptor*          staticSamplers;
+            public IntPtr                            numUniforms;
+            public UniformDescriptor*                uniforms;
+            public IntPtr                            numCombinedTextureSamplers;
+            public CombinedTextureSamplerDescriptor* combinedTextureSamplers;
+            public int                               barrierFlags;               /* = 0 */
         }
 
         public unsafe struct GraphicsPipelineDescriptor
@@ -4185,6 +4350,9 @@ namespace LLGL
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public unsafe delegate void ReportCallbackDelegate(ReportType type, [MarshalAs(UnmanagedType.LPStr)] string text, void* userData);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public unsafe delegate void ReportCallbackExtDelegate(ReportType type, [MarshalAs(UnmanagedType.LPStr)] string text, void* userData, ref ColorCodes colors);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public unsafe delegate void OnWindowQuitDelegate(Window sender, bool* veto);
@@ -4535,11 +4703,14 @@ namespace LLGL
         [DllImport(DllName, EntryPoint="llglRegisterLogCallback", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe IntPtr RegisterLogCallback(IntPtr callback, void* userData);
 
+        [DllImport(DllName, EntryPoint="llglRegisterLogCallbackExt", CallingConvention=CallingConvention.Cdecl)]
+        public static extern unsafe IntPtr RegisterLogCallbackExt(IntPtr callback, void* userData);
+
         [DllImport(DllName, EntryPoint="llglRegisterLogCallbackReport", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe IntPtr RegisterLogCallbackReport(Report report);
 
         [DllImport(DllName, EntryPoint="llglRegisterLogCallbackStd", CallingConvention=CallingConvention.Cdecl)]
-        public static extern unsafe IntPtr RegisterLogCallbackStd();
+        public static extern unsafe IntPtr RegisterLogCallbackStd(int stdOutFlags);
 
         [DllImport(DllName, EntryPoint="llglUnregisterLogCallback", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void UnregisterLogCallback(IntPtr handle);
@@ -4791,6 +4962,10 @@ namespace LLGL
 
         [DllImport(DllName, EntryPoint="llglGetResourceType", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe ResourceType GetResourceType(Resource resource);
+
+        [DllImport(DllName, EntryPoint="llglGetResourceNativeHandle", CallingConvention=CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        public static extern unsafe bool GetResourceNativeHandle(Resource resource, void* nativeHandle, IntPtr nativeHandleSize);
 
         [DllImport(DllName, EntryPoint="llglGetResourceHeapNumDescriptorSets", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe int GetResourceHeapNumDescriptorSets(ResourceHeap resourceHeap);
