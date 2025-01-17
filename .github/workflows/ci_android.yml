@@ -37,6 +37,8 @@ jobs:
 
     - name: 1
       run: |
+        sudo wget -O /etc/apt/trusted.gpg.d/lunarg-signing-key-pub.asc http://packages.lunarg.com/lunarg-signing-key-pub.asc
+        sudo wget -O /etc/apt/sources.list.d/lunarg-vulkan-noble.list http://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
         sudo apt update
         sudo apt-get install libx11-dev libxrandr-dev libglu1-mesa-dev freeglut3-dev mesa-common-dev vulkan-sdk vulkan-tools
 
