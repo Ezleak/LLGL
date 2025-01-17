@@ -46,6 +46,7 @@ jobs:
         -DCMAKE_BUILD_TYPE=${{ matrix.config }}
         -DLLGL_BUILD_STATIC_LIB=${{ matrix.lib == 'Static' && 'ON' || 'OFF' }}
         -DLLGL_BUILD_RENDERER_OPENGLES3=ON
+        -DLLGL_BUILD_RENDERER_OPENGL=ON
         -DLLGL_BUILD_RENDERER_NULL=OFF
         -DLLGL_BUILD_RENDERER_VULKAN=ON
         -DLLGL_BUILD_EXAMPLES=ON
