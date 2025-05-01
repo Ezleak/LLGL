@@ -19,6 +19,7 @@
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Platform/NativeHandle.h>
 #include <LLGL/Backend/Direct3D12/NativeHandle.h>
+#include <LLGL/Container/DynamicArray.h>
 #include <limits.h>
 
 #include "Shader/D3D12BuiltinShaderFactory.h"
@@ -48,7 +49,7 @@ D3D12RenderSystem::D3D12RenderSystem(const RenderSystemDescriptor& renderSystemD
     if (auto* customNativeHandle = GetRendererNativeHandle<Direct3D12::RenderSystemNativeHandle>(renderSystemDesc))
     {
         /* Query all DXGI interfaces from native handle */
-        HRESULT hr = QueryDXInterfacesFromNativeHandle(*customNativeHandle);
+        HRESULT hr = QueryDXInterfacesFromNativeHandle(*customNativeHandle, renderSystemDesc.flags);
         DXThrowIfFailed(hr, "failed to query D3D12 device from custom native handle");
     }
     else
@@ -59,7 +60,7 @@ D3D12RenderSystem::D3D12RenderSystem(const RenderSystemDescriptor& renderSystemD
         ComPtr<IDXGIAdapter> preferredAdatper;
         QueryVideoAdapters(renderSystemDesc.flags, preferredAdatper);
 
-        HRESULT hr = CreateDevice(preferredAdatper.Get(), isDebugDevice);
+        HRESULT hr = CreateDevice(preferredAdatper.Get(), renderSystemDesc.flags);
         DXThrowIfFailed(hr, "failed to create D3D12 device");
     }
 
@@ -197,7 +198,7 @@ Texture* D3D12RenderSystem::CreateTexture(const TextureDescriptor& textureDesc, 
 {
     auto* textureD3D = textures_.emplace<D3D12Texture>(device_.GetNative(), textureDesc);
 
-    if (initialImage != nullptr)
+    if (initialImage != nullptr && !IsMultiSampleTexture(textureDesc.type))
     {
         /* Update base MIP-map */
         TextureRegion region;
@@ -254,14 +255,13 @@ void D3D12RenderSystem::ReadTexture(Texture& texture, const TextureRegion& textu
     const Format            format              = textureD3D.GetFormat();
     const FormatAttributes& formatAttribs       = GetFormatAttribs(format);
     const Extent3D          extent              = CalcTextureExtent(textureD3D.GetType(), textureRegion.extent);
-    const std::uint32_t     numTexelsPerLayer   = extent.width * extent.height * extent.depth;
 
     void* mappedData = nullptr;
     HRESULT hr = readbackBuffer->Map(0, nullptr, &mappedData);
     DXThrowIfFailed(hr, "failed to map D3D12 texture copy resource");
 
     const char* srcData = static_cast<const char*>(mappedData);
-    ImageView intermediateSrcView{ formatAttribs.format, formatAttribs.dataType, srcData, layerStride };
+    ImageView intermediateSrcView{ formatAttribs.format, formatAttribs.dataType, srcData, layerStride, rowStride };
 
     if (isStencilOnlyFormat)
     {
@@ -277,7 +277,7 @@ void D3D12RenderSystem::ReadTexture(Texture& texture, const TextureRegion& textu
     for_range(arrayLayer, textureRegion.subresource.numArrayLayers)
     {
         /* Copy CPU accessible buffer to output data */
-        RenderSystem::CopyTextureImageData(intermediateDstView, intermediateSrcView, numTexelsPerLayer, extent.width, rowStride);
+        ConvertImageBuffer(intermediateSrcView, intermediateDstView, extent, LLGL_MAX_THREAD_COUNT, true);
 
         /* Move destination image pointer to next layer */
         intermediateDstView.data = static_cast<char*>(intermediateDstView.data) + layerSize;
@@ -441,6 +441,8 @@ bool D3D12RenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHa
         nativeHandleD3D->factory->AddRef();
         nativeHandleD3D->device = device_.GetNative();
         nativeHandleD3D->device->AddRef();
+        nativeHandleD3D->commandQueue = commandQueue_->GetNative();
+        nativeHandleD3D->commandQueue->AddRef();
         return true;
     }
     return false;
@@ -519,7 +521,7 @@ void D3D12RenderSystem::QueryVideoAdapters(long flags, ComPtr<IDXGIAdapter>& out
     videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get(), flags, outPreferredAdatper.ReleaseAndGetAddressOf());
 }
 
-HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, bool isDebugLayerEnabled)
+HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, long flags)
 {
     const D3D_FEATURE_LEVEL featureLevels[] =
     {
@@ -543,13 +545,13 @@ HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, bool isD
     if (preferredAdapter != nullptr)
     {
         /* Try to create device with perferred adatper */
-        hr = device_.CreateDXDevice(featureLevels, isDebugLayerEnabled, preferredAdapter);
+        hr = device_.CreateDXDevice(featureLevels, flags, preferredAdapter);
         if (SUCCEEDED(hr))
             return hr;
     }
 
     /* Try to create device with default adapter */
-    hr = device_.CreateDXDevice(featureLevels, isDebugLayerEnabled);
+    hr = device_.CreateDXDevice(featureLevels, flags);
     if (SUCCEEDED(hr))
     {
         /* Update video adapter info with default adapter */
@@ -560,10 +562,10 @@ HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, bool isD
     /* Use software adapter as fallback */
     ComPtr<IDXGIAdapter> adapter;
     factory_->EnumWarpAdapter(IID_PPV_ARGS(adapter.ReleaseAndGetAddressOf()));
-    return device_.CreateDXDevice(featureLevels, isDebugLayerEnabled, adapter.Get());
+    return device_.CreateDXDevice(featureLevels, flags, adapter.Get());
 }
 
-HRESULT D3D12RenderSystem::QueryDXInterfacesFromNativeHandle(const Direct3D12::RenderSystemNativeHandle& nativeHandle)
+HRESULT D3D12RenderSystem::QueryDXInterfacesFromNativeHandle(const Direct3D12::RenderSystemNativeHandle& nativeHandle, long flags)
 {
     LLGL_ASSERT_PTR(nativeHandle.factory);
     LLGL_ASSERT_PTR(nativeHandle.device);
@@ -581,7 +583,7 @@ HRESULT D3D12RenderSystem::QueryDXInterfacesFromNativeHandle(const Direct3D12::R
 
     DXConvertVideoAdapterInfo(dxgiAdapter.Get(), dxgiAdapterDesc, videoAdatperInfo_);
 
-    return device_.ShareDXDevice(nativeHandle.device);
+    return device_.ShareDXDevice(nativeHandle.device, flags);
 }
 
 static D3D_SHADER_MODEL FindHighestShaderModel(ID3D12Device* device)
@@ -731,6 +733,13 @@ static std::uint32_t GetMaxRenderTargets(D3D_FEATURE_LEVEL featureLevel)
     else                                        return 1;
 }
 
+static long GetStorageResourceStageFlags(D3D_FEATURE_LEVEL featureLevel)
+{
+    if (featureLevel >= D3D_FEATURE_LEVEL_11_1) return StageFlags::AllStages; // UAVs not supported in non-pixel/compute stages before feature level 11.1
+    if (featureLevel >= D3D_FEATURE_LEVEL_11_0) return StageFlags::FragmentStage | StageFlags::ComputeStage;
+    else                                        return 0;
+}
+
 void D3D12RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
 {
     const D3D_FEATURE_LEVEL featureLevel = GetFeatureLevel();
@@ -755,7 +764,7 @@ void D3D12RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.features.hasTextureViewSwizzle             = true;
     caps.features.hasBufferViews                    = true;
     caps.features.hasConstantBuffers                = true;
-    caps.features.hasStorageBuffers                 = true;
+    caps.features.hasStorageBuffers                 = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasGeometryShaders                = (featureLevel >= D3D_FEATURE_LEVEL_10_0);
     caps.features.hasTessellationShaders            = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasTessellatorStage               = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
@@ -802,6 +811,7 @@ void D3D12RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.limits.maxDepthBufferSamples               = device_.FindSuitableSampleDesc(DXGI_FORMAT_D32_FLOAT).Count;
     caps.limits.maxStencilBufferSamples             = device_.FindSuitableSampleDesc(DXGI_FORMAT_D32_FLOAT_S8X24_UINT).Count;
     caps.limits.maxNoAttachmentSamples              = D3D12_MAX_MULTISAMPLE_SAMPLE_COUNT;
+    caps.limits.storageResourceStageFlags           = GetStorageResourceStageFlags(featureLevel);
 }
 
 void D3D12RenderSystem::ExecuteCommandListAndSync()
@@ -850,7 +860,6 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     const Format            format          = textureD3D.GetFormat();
     const FormatAttributes& formatAttribs   = GetFormatAttribs(format);
 
-    const Extent3D                      srcExtent   = CalcTextureExtent(textureD3D.GetType(), region.extent, subresource.numArrayLayers);
     const SubresourceCPUMappingLayout   dataLayout  = CalcSubresourceCPUMappingLayout(format, region.extent, subresource.numArrayLayers, imageView.format, imageView.dataType);
 
     if (imageView.dataSize < dataLayout.imageSize)
@@ -867,12 +876,17 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     DynamicByteArray intermediateData;
     const void* srcData = imageView.data;
 
+    std::uint32_t srcRowStride      = imageView.rowStride > 0 ? imageView.rowStride                        : dataLayout.rowStride;
+    std::uint32_t srcLayerStride    = imageView.rowStride > 0 ? imageView.rowStride * region.extent.height : dataLayout.layerStride;
+
     if ((formatAttribs.flags & FormatFlags::IsCompressed) == 0 &&
         (formatAttribs.format != imageView.format || formatAttribs.dataType != imageView.dataType))
     {
         /* Convert image data (e.g. from RGB to RGBA), and redirect initial data to new buffer */
-        intermediateData    = ConvertImageBuffer(imageView, formatAttribs.format, formatAttribs.dataType, LLGL_MAX_THREAD_COUNT);
+        intermediateData    = ConvertImageBuffer(imageView, formatAttribs.format, formatAttribs.dataType, region.extent, LLGL_MAX_THREAD_COUNT);
         srcData             = intermediateData.get();
+        srcRowStride        = dataLayout.rowStride;
+        srcLayerStride      = dataLayout.layerStride;
         LLGL_ASSERT(intermediateData.size() == dataLayout.subresourceSize);
     }
 
@@ -880,11 +894,12 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     D3D12_SUBRESOURCE_DATA subresourceData;
     {
         subresourceData.pData       = srcData;
-        subresourceData.RowPitch    = dataLayout.rowStride;
-        subresourceData.SlicePitch  = dataLayout.layerStride;
+        subresourceData.RowPitch    = srcRowStride;
+        subresourceData.SlicePitch  = srcLayerStride;
     }
 
-    const bool isFullRegion = (region.offset == Offset3D{} && srcExtent == mipExtent);
+    const Extent3D srcExtent    = CalcTextureExtent(textureD3D.GetType(), region.extent, subresource.numArrayLayers);
+    const bool     isFullRegion = (region.offset == Offset3D{} && srcExtent == mipExtent);
     if (isFullRegion)
         textureD3D.UpdateSubresource(subresourceContext, subresourceData, region.subresource);
     else

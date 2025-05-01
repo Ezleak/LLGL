@@ -22,6 +22,7 @@
 #include "../../TextureUtils.h"
 #include "../../../Core/Exception.h"
 #include "../../../Core/CoreUtils.h"
+#include <LLGL/Format.h>
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
 
@@ -862,11 +863,25 @@ void GLTexture::CopyImageFromBuffer(
     GLStateManager::Get().BindBuffer(GLBufferTarget::PixelUnpackBuffer, 0);
 }
 
+static GLuint GetGLRowLengthOrZero(const ImageView& imageView)
+{
+    if (imageView.rowStride > 0)
+    {
+        /* Divide row stride by bytes-per-pixel; This will be zero for compressed formats! */
+        const std::uint32_t bytesPerPixel = static_cast<std::uint32_t>(GetMemoryFootprint(imageView.format, imageView.dataType, 1));
+        if (bytesPerPixel > 0)
+            return static_cast<GLuint>(imageView.rowStride / bytesPerPixel);
+    }
+    return 0;
+}
+
 void GLTexture::TextureSubImage(const TextureRegion& region, const ImageView& srcImageView, bool restoreBoundTexture)
 {
     if (!IsRenderbuffer())
     {
-        GLStateManager::Get().SetPixelStoreUnpack(srcImageView.rowStride, region.extent.height, 1);
+        const GLuint srcRowLength = GetGLRowLengthOrZero(srcImageView);
+
+        GLStateManager::Get().SetPixelStoreUnpack(srcRowLength, region.extent.height, 1);
         {
             #if LLGL_GLEXT_DIRECT_STATE_ACCESS
             if (HasExtension(GLExt::ARB_direct_state_access))
@@ -1267,12 +1282,18 @@ void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const 
     /* Convert initial image data for texture swizzle formats */
     ImageView intermediateImageView;
 
-    if (initialImage != nullptr && GetSwizzleFormat() == GLSwizzleFormat::BGRA)
+    if (initialImage != nullptr)
     {
-        intermediateImageView = *initialImage;
-        intermediateImageView.format = MapSwizzleImageFormat(initialImage->format);
-        initialImage = &intermediateImageView;
-        GLStateManager::Get().SetPixelStoreUnpack(initialImage->rowStride, textureDesc.extent.height, 1);
+        /* Re-map image format if texture format must be emulated with component swizzling */
+        if (GetSwizzleFormat() == GLSwizzleFormat::BGRA)
+        {
+            intermediateImageView = *initialImage;
+            intermediateImageView.format = MapSwizzleImageFormat(initialImage->format);
+            initialImage = &intermediateImageView;
+        }
+
+        const GLuint srcRowLength = GetGLRowLengthOrZero(*initialImage);
+        GLStateManager::Get().SetPixelStoreUnpack(srcRowLength, textureDesc.extent.height, 1);
     }
 
     /* Build texture storage and upload image dataa */
@@ -1299,7 +1320,8 @@ void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const 
     InitializeGLTextureSwizzleWithFormat(GetType(), swizzleFormat_, {}, true);
     #endif
 
-    if (initialImage != nullptr) {
+    if (initialImage != nullptr)
+    {
         GLStateManager::Get().SetPixelStoreUnpack(0, 0, 1);
 
         /* Generate MIP-maps if enabled */

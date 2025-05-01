@@ -35,7 +35,9 @@ VKResourceHeap::VKResourceHeap(
     const ResourceHeapDescriptor&               desc,
     const ArrayView<ResourceViewDescriptor>&    initialResourceViews)
 :
-    descriptorPool_ { device, vkDestroyDescriptorPool }
+    descriptorPool_    { device, vkDestroyDescriptorPool },
+    numBufferBarriers_ { 0                               },
+    numImageBarriers_  { 0                               }
 {
     /* Get pipeline layout object */
     auto* pipelineLayoutVK = LLGL_CAST(VKPipelineLayout*, desc.pipelineLayout);
@@ -43,7 +45,7 @@ VKResourceHeap::VKResourceHeap(
         LLGL_TRAP("failed to create resource view heap due to missing pipeline layout");
 
     /* Get and validate number of bindings and resource views */
-    ConvertLayoutBindings(pipelineLayoutVK->GetLayoutHeapBindings());
+    ConvertAllLayoutBindings(pipelineLayoutVK->GetBindingTable().heapBindings);
 
     const std::uint32_t numBindings         = static_cast<std::uint32_t>(bindings_.size());
     const std::uint32_t numResourceViews    = GetNumResourceViewsOrThrow(numBindings, desc, initialResourceViews);
@@ -52,10 +54,7 @@ VKResourceHeap::VKResourceHeap(
     const std::uint32_t numDescriptorSets = (numResourceViews / numBindings);
     CreateDescriptorPool(device, numDescriptorSets);
     CreateDescriptorSets(device, numDescriptorSets, pipelineLayoutVK->GetSetLayoutForHeapBindings());
-
-    /* Allocate array for descriptor set barriers */
-    if ((pipelineLayoutVK->GetBarrierFlags() & BarrierFlags::Storage) != 0)
-        barriers_.resize(numDescriptorSets);
+    AllocateBarrierSlots(numDescriptorSets);
 
     /* Write initial resource views */
     if (!initialResourceViews.empty())
@@ -88,7 +87,6 @@ std::uint32_t VKResourceHeap::WriteResourceViews(
 
     const std::uint32_t numResourceViewWrites = static_cast<std::uint32_t>(resourceViews.size());
     VKDescriptorSetWriter setWriter{ numResourceViewWrites, numResourceViewWrites };
-    VKDescriptorBarrierWriter barrierWriter;
 
     for (const ResourceViewDescriptor& desc : resourceViews)
     {
@@ -97,7 +95,7 @@ std::uint32_t VKResourceHeap::WriteResourceViews(
             continue;
 
         /* Get resource view information */
-        const VKDescriptorBinding& binding = bindings_[firstDescriptor % numBindings];
+        const VKLayoutHeapBinding& binding = bindings_[firstDescriptor % numBindings];
 
         const std::uint32_t descriptorSet = firstDescriptor / numBindings;
 
@@ -120,7 +118,9 @@ std::uint32_t VKResourceHeap::WriteResourceViews(
 
             case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-                FillWriteDescriptorWithBufferRange(device, desc, descriptorSet, binding, setWriter, barrierWriter);
+            case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                FillWriteDescriptorWithBufferRange(device, desc, descriptorSet, binding, setWriter);
                 break;
 
             default:
@@ -138,28 +138,31 @@ std::uint32_t VKResourceHeap::WriteResourceViews(
         setWriter.UpdateDescriptorSets(device);
     }
 
-    /* Update pipeline barriers */
-    for_subrange(i, barrierWriter.barrierChangeRanges[0], barrierWriter.barrierChangeRanges[1])
-    {
-        if (VKPipelineBarrier* barrier = barriers_[i].get())
-        {
-            if (!barrier->Update())
-                barriers_[i].reset();
-        }
-    }
-
     return setWriter.GetNumWrites();
 }
 
-void VKResourceHeap::SubmitPipelineBarrier(VkCommandBuffer commandBuffer, std::uint32_t descriptorSet)
+void VKResourceHeap::SetBarrierSlots(VKPipelineBarrier& barrier, std::uint32_t descriptorSet)
 {
-    if (descriptorSet < barriers_.size())
+    const std::size_t barrierResourceOffset = barrierSlots_.size()*descriptorSet;
+    if (barrierResourceOffset >= barrierResources_.size())
+        return /*Out of bounds*/;
+
+    /* Set buffer barriers */
+    for_range(i, numBufferBarriers_)
     {
-        if (VKPipelineBarrier* barrier = barriers_[descriptorSet].get())
-        {
-            if (barrier->IsActive())
-                barrier->Submit(commandBuffer);
-        }
+        barrier.SetBufferBarrier(
+            barrierSlots_[i],
+            barrierResources_[barrierResourceOffset + i].buffer
+        );
+    }
+
+    /* Set image barriers */
+    for_range(i, numImageBarriers_)
+    {
+        barrier.SetImageBarrier(
+            barrierSlots_[numBufferBarriers_ + i],
+            barrierResources_[barrierResourceOffset + numBufferBarriers_ + i].image
+        );
     }
 }
 
@@ -167,26 +170,6 @@ void VKResourceHeap::SubmitPipelineBarrier(VkCommandBuffer commandBuffer, std::u
 /*
  * ======= Private: =======
  */
-
-static VkPipelineStageFlags ToVkStageFlags(long stageFlags)
-{
-    VkPipelineStageFlags bitmask = 0;
-
-    if ((stageFlags & StageFlags::VertexStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-    if ((stageFlags & StageFlags::TessControlStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
-    if ((stageFlags & StageFlags::TessEvaluationStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
-    if ((stageFlags & StageFlags::GeometryStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
-    if ((stageFlags & StageFlags::FragmentStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    if ((stageFlags & StageFlags::ComputeStage) != 0)
-        bitmask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-
-    return bitmask;
-}
 
 static bool IsDescriptorTypeImageView(VkDescriptorType type)
 {
@@ -210,19 +193,20 @@ static bool IsDescriptorTypeBufferView(VkDescriptorType type)
     );
 }
 
-void VKResourceHeap::ConvertLayoutBindings(const ArrayView<VKLayoutBinding>& layoutBindings)
+void VKResourceHeap::ConvertAllLayoutBindings(const ArrayView<VKLayoutBinding>& layoutBindings)
 {
     bindings_.resize(layoutBindings.size());
     for_range(i, layoutBindings.size())
         ConvertLayoutBinding(bindings_[i], layoutBindings[i]);
 }
 
-void VKResourceHeap::ConvertLayoutBinding(VKDescriptorBinding& dst, const VKLayoutBinding& src)
+void VKResourceHeap::ConvertLayoutBinding(VKLayoutHeapBinding& dst, const VKLayoutBinding& src)
 {
     dst.dstBinding      = src.dstBinding;
     dst.dstArrayElement = src.dstArrayElement;
+    dst.barrierSlot     = src.barrierSlot;
     dst.descriptorType  = src.descriptorType;
-    dst.stageFlags      = ToVkStageFlags(src.stageFlags);
+    dst.stageFlags      = src.stageFlags;
     dst.imageViewIndex  = (IsDescriptorTypeImageView(src.descriptorType) ? numImageViewsPerSet_++ : VKResourceHeap::invalidViewIndex);
     dst.bufferViewIndex = (IsDescriptorTypeBufferView(src.descriptorType) ? numBufferViewsPerSet_++ : VKResourceHeap::invalidViewIndex);
 }
@@ -231,8 +215,17 @@ void VKResourceHeap::CreateDescriptorPool(VkDevice device, std::uint32_t numDesc
 {
     /* Accumulate descriptor pool sizes */
     VKPoolSizeAccumulator poolSizeAccum;
-    for (const VKDescriptorBinding& binding : bindings_)
-        poolSizeAccum.Accumulate(binding.descriptorType, numDescriptorSets);
+    for (const VKLayoutHeapBinding& binding : bindings_)
+    {
+        if (binding.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+        {
+            poolSizeAccum.Accumulate(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, numDescriptorSets);
+            poolSizeAccum.Accumulate(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, numDescriptorSets);
+            poolSizeAccum.Accumulate(VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, numDescriptorSets);
+        }
+        else
+            poolSizeAccum.Accumulate(binding.descriptorType, numDescriptorSets);
+    }
     poolSizeAccum.Finalize();
 
     /* Create Vulkan descriptor pool */
@@ -277,7 +270,7 @@ void VKResourceHeap::CreateDescriptorSets(
 void VKResourceHeap::FillWriteDescriptorWithSampler(
     const ResourceViewDescriptor&   desc,
     std::uint32_t                   descriptorSet,
-    const VKDescriptorBinding&      binding,
+    const VKLayoutHeapBinding&      binding,
     VKDescriptorSetWriter&          setWriter)
 {
     auto* samplerVK = LLGL_CAST(VKSampler*, desc.resource);
@@ -308,7 +301,7 @@ void VKResourceHeap::FillWriteDescriptorWithImageView(
     VkDevice                        device,
     const ResourceViewDescriptor&   desc,
     std::uint32_t                   descriptorSet,
-    const VKDescriptorBinding&      binding,
+    const VKLayoutHeapBinding&      binding,
     VKDescriptorSetWriter&          setWriter)
 {
     auto* textureVK = LLGL_CAST(VKTexture*, desc.resource);
@@ -334,33 +327,30 @@ void VKResourceHeap::FillWriteDescriptorWithImageView(
         writeDesc->pBufferInfo      = nullptr;
         writeDesc->pTexelBufferView = nullptr;
     }
+
+    /* Write barrier slot */
+    if (binding.barrierSlot < barrierSlots_.size())
+    {
+        switch (binding.descriptorType)
+        {
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                barrierResources_[barrierSlots_.size()*descriptorSet + binding.barrierSlot] = textureVK->GetVkImage();
+                break;
+
+            default:
+                break;
+        }
+    }
 }
 
 void VKResourceHeap::FillWriteDescriptorWithBufferRange(
-    VkDevice                        /*device*/,
+    VkDevice                        device,
     const ResourceViewDescriptor&   desc,
     std::uint32_t                   descriptorSet,
-    const VKDescriptorBinding&      binding,
-    VKDescriptorSetWriter&          setWriter,
-    VKDescriptorBarrierWriter&      barrierWriter)
+    const VKLayoutHeapBinding&      binding,
+    VKDescriptorSetWriter&          setWriter)
 {
     auto* bufferVK = LLGL_CAST(VKBuffer*, desc.resource);
-
-    /* Initialize buffer information */
-    VkDescriptorBufferInfo* bufferInfo = setWriter.NextBufferInfo();
-    {
-        bufferInfo->buffer = bufferVK->GetVkBuffer();
-        if (desc.bufferView.size == LLGL_WHOLE_SIZE)
-        {
-            bufferInfo->offset  = 0;
-            bufferInfo->range   = bufferVK->GetSize();
-        }
-        else
-        {
-            bufferInfo->offset  = desc.bufferView.offset;
-            bufferInfo->range   = desc.bufferView.size;
-        }
-    }
 
     /* Initialize write descriptor */
     VkWriteDescriptorSet* writeDesc = setWriter.NextWriteDescriptor();
@@ -369,55 +359,57 @@ void VKResourceHeap::FillWriteDescriptorWithBufferRange(
         writeDesc->dstBinding       = binding.dstBinding;
         writeDesc->dstArrayElement  = binding.dstArrayElement;
         writeDesc->descriptorCount  = 1;
-        writeDesc->descriptorType   = binding.descriptorType;
         writeDesc->pImageInfo       = nullptr;
-        writeDesc->pBufferInfo      = bufferInfo;
-        writeDesc->pTexelBufferView = nullptr;
-    }
+        writeDesc->descriptorType   = binding.descriptorType;
 
-    /* Emplace pipeline barrier for storage buffer */
-    if (ExchangeBufferBarrier(descriptorSet, bufferVK, binding))
-    {
-        barrierWriter.barrierChangeRanges[0] = std::min(barrierWriter.barrierChangeRanges[0], descriptorSet);
-        barrierWriter.barrierChangeRanges[1] = std::max(barrierWriter.barrierChangeRanges[1], descriptorSet + 1);
-    }
-}
-
-bool VKResourceHeap::ExchangeBufferBarrier(std::uint32_t descriptorSet, Buffer* resource, const VKDescriptorBinding& binding)
-{
-    if (descriptorSet < barriers_.size())
-    {
-        if ((resource->GetBindFlags() & BindFlags::Storage) != 0)
-            return EmplaceBarrier(descriptorSet, binding.dstBinding, resource, binding.stageFlags);
+        if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
+            binding.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
+        {
+            //TODO: when a texel buffer is used, the set-layout must be updated as well.
+            const std::size_t bufferViewIndex = descriptorSet * numBufferViewsPerSet_ + binding.bufferViewIndex;
+            VkBufferView* bufferViewInfo = setWriter.NextBufferView();
+            {
+                *bufferViewInfo = GetOrCreateBufferView(device, *bufferVK, desc, bufferViewIndex);
+            }
+            writeDesc->pBufferInfo      = nullptr;
+            writeDesc->pTexelBufferView = bufferViewInfo;
+        }
         else
-            return RemoveBarrier(descriptorSet, binding.dstBinding);
+        {
+            /* Initialize buffer information */
+            VkDescriptorBufferInfo* bufferInfo = setWriter.NextBufferInfo();
+            {
+                bufferInfo->buffer = bufferVK->GetVkBuffer();
+                if (desc.bufferView.size == LLGL_WHOLE_SIZE)
+                {
+                    bufferInfo->offset  = 0;
+                    bufferInfo->range   = bufferVK->GetSize();
+                }
+                else
+                {
+                    bufferInfo->offset  = desc.bufferView.offset;
+                    bufferInfo->range   = desc.bufferView.size;
+                }
+            }
+            writeDesc->pBufferInfo      = bufferInfo;
+            writeDesc->pTexelBufferView = nullptr;
+        }
     }
-    return false;
-}
 
-bool VKResourceHeap::EmplaceBarrier(std::uint32_t descriptorSet, std::uint32_t slot, Resource* resource, VkPipelineStageFlags stageFlags)
-{
-    if (VKPipelineBarrier* barrier = barriers_[descriptorSet].get())
+    /* Write barrier slot */
+    if (binding.barrierSlot < barrierSlots_.size())
     {
-        /* Emplace into existing pipeline barrier */
-        return barrier->Emplace(slot, resource, stageFlags);
-    }
-    else
-    {
-        /* Allocate new pipeline barrier for descriptor set */
-        VKPipelineBarrierPtr newBarrier = MakeUnique<VKPipelineBarrier>();
-        newBarrier->Emplace(slot, resource, stageFlags);
-        barriers_[descriptorSet] = std::move(newBarrier);
-        return true;
-    }
-}
+        switch (binding.descriptorType)
+        {
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                barrierResources_[barrierSlots_.size()*descriptorSet + binding.barrierSlot] = bufferVK->GetVkBuffer();
+                break;
 
-bool VKResourceHeap::RemoveBarrier(std::uint32_t descriptorSet, std::uint32_t slot)
-{
-    if (VKPipelineBarrier* barrier = barriers_[descriptorSet].get())
-        return barrier->Remove(slot);
-    else
-        return false;
+            default:
+                break;
+        }
+    }
 }
 
 VkImageView VKResourceHeap::GetOrCreateImageView(
@@ -450,9 +442,92 @@ VkImageView VKResourceHeap::GetOrCreateImageView(
         if (imageViewIndex < imageViews_.size() && imageViews_[imageViewIndex])
             imageViews_[imageViewIndex].Release();
 
-        /* Returns the standard image view */
+        /* Return the standard image view */
         return textureVK.GetVkImageView();
     }
+}
+
+VkBufferView VKResourceHeap::GetOrCreateBufferView(
+    VkDevice                        device,
+    VKBuffer&                       bufferVK,
+    const ResourceViewDescriptor&   desc,
+    std::size_t                     bufferViewIndex)
+{
+    if (IsBufferViewEnabled(desc.bufferView))
+    {
+        /* Creates a new buffer view for the specified subresource descriptor */
+        VKPtr<VkBufferView> bufferView{ device, vkDestroyBufferView };
+        bufferVK.CreateBufferView(device, bufferView, static_cast<VkDeviceSize>(desc.bufferView.offset), static_cast<VkDeviceSize>(desc.bufferView.size));
+
+        /* Remove previous buffer view entry */
+        if (bufferViewIndex < bufferViews_.size() && bufferViews_[bufferViewIndex])
+            bufferViews_[bufferViewIndex].Release();
+
+        /* Increase buffer view container for new entry */
+        if (bufferViewIndex >= bufferViews_.size())
+            bufferViews_.resize(bufferViewIndex + 1);
+
+        /* Emplace new buffer view entry */
+        bufferViews_[bufferViewIndex] = std::move(bufferView);
+        return bufferViews_[bufferViewIndex].Get();
+    }
+    else
+    {
+        /* Remove previous buffer view entry */
+        if (bufferViewIndex < bufferViews_.size() && bufferViews_[bufferViewIndex])
+            bufferViews_[bufferViewIndex].Release();
+
+        /* Return the standard buffer view */
+        LLGL_ASSERT(bufferVK.GetBufferView());
+        return bufferVK.GetBufferView();
+    }
+}
+
+void VKResourceHeap::AllocateBarrierSlots(std::uint32_t numDescriptorSets)
+{
+    /* Allocate all buffer barrier slots first */
+    for (VKLayoutHeapBinding& binding : bindings_)
+    {
+        if (binding.barrierSlot != ~0u)
+        {
+            switch (binding.descriptorType)
+            {
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                    /* Move barrier slot and assign old field a new value as index to the barrier array */
+                    barrierSlots_.push_back(binding.barrierSlot);
+                    binding.barrierSlot = static_cast<std::uint32_t>(barrierSlots_.size());
+                    ++numBufferBarriers_;
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
+    /* Allocate all imge barrier slots next */
+    for (VKLayoutHeapBinding& binding : bindings_)
+    {
+        if (binding.barrierSlot != ~0u)
+        {
+            switch (binding.descriptorType)
+            {
+                case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                    /* Move barrier slot and assign old field a new value as index to the barrier array */
+                    barrierSlots_.push_back(binding.barrierSlot);
+                    binding.barrierSlot = static_cast<std::uint32_t>(barrierSlots_.size());
+                    ++numImageBarriers_;
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
+    /* Allocate barrier resource array */
+    barrierResources_.resize(barrierSlots_.size()*numDescriptorSets);
 }
 
 

@@ -60,12 +60,20 @@ class VKRenderSystem final : public RenderSystem
         VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc);
         ~VKRenderSystem();
 
+    public:
+
+        inline bool IsBreakOnErrorEnabled() const
+        {
+            return isBreakOnErrorEnabled_;
+        }
+
     private:
 
         #include <LLGL/Backend/RenderSystem.Internal.inl>
 
     private:
 
+        void QuerySupportedInstanceExtensions();
         void CreateInstance(const RendererConfigurationVulkan* config);
         void CreateDebugReportCallback();
         bool PickPhysicalDevice(long preferredDeviceFlags, VkPhysicalDevice customPhysicalDevice = VK_NULL_HANDLE);
@@ -83,9 +91,9 @@ class VKRenderSystem final : public RenderSystem
 
         VKDeviceBuffer CreateTextureStagingBufferAndInitialize(
             const VkBufferCreateInfo&   createInfo,
-            const Extent3D&             extent,
             const void*                 data,
             VkDeviceSize                dataSize,
+            const Extent3D&             extent,
             std::uint32_t               srcRowStride,
             std::uint32_t               bpp
         );
@@ -98,12 +106,15 @@ class VKRenderSystem final : public RenderSystem
         /* ----- Common objects ----- */
 
         VKPtr<VkInstance>                       instance_;
+        std::vector<VkExtensionProperties>      instanceExtensionProperties_;
+        std::vector<const char*>                supportedInstanceExtensions_;
 
         VKPhysicalDevice                        physicalDevice_;
         VKDevice                                device_;
         VKCommandContext                        context_;
 
-        bool                                    debugLayerEnabled_      = false;
+        bool                                    isDebugLayerEnabled_    = false;
+        bool                                    isBreakOnErrorEnabled_  = false;
         VKPtr<VkDebugReportCallbackEXT>         debugReportCallback_;
 
         std::unique_ptr<VKDeviceMemoryManager>  deviceMemoryMngr_;

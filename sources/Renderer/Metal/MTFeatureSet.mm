@@ -8,6 +8,7 @@
 #include "MTFeatureSet.h"
 #include "MTDevice.h"
 #include "OSXAvailability.h"
+#include <LLGL/ShaderFlags.h>
 #include <AvailabilityMacros.h>
 #include <initializer_list>
 #include <algorithm>
@@ -20,23 +21,26 @@ namespace LLGL
 // Converts the specified Metal feature set into a fixed version number
 static int FeatureSetToVersion(MTLFeatureSet fset)
 {
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_11
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v1)
-        return 101; // 1.1
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_14
+    if (fset >= MTLFeatureSet_macOS_GPUFamily2_v1)
+        return 201; // 2.1
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v4)
+        return 104; // 1.4
     #endif
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_12
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v2)
-        return 102; // 1.2
-    #endif
+
     #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_13
     if (fset >= MTLFeatureSet_macOS_GPUFamily1_v3)
         return 103; // 1.3
     #endif
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_14
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v4)
-        return 104; // 1.4
-    if (fset >= MTLFeatureSet_macOS_GPUFamily2_v1)
-        return 201; // 2.1
+
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_12
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v2)
+        return 102; // 1.2
+    #endif
+
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_11
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v1)
+        return 101; // 1.1
     #endif
     return 100; // 1.0
 }
@@ -193,6 +197,8 @@ void LoadFeatureSetCaps(id<MTLDevice> device, MTLFeatureSet fset, RenderingCapab
     caps.limits.maxDepthBufferSamples       = static_cast<std::uint32_t>(maxSamples);
     caps.limits.maxStencilBufferSamples     = static_cast<std::uint32_t>(maxSamples);
     caps.limits.maxNoAttachmentSamples      = static_cast<std::uint32_t>(maxSamples);
+
+    caps.limits.storageResourceStageFlags   = StageFlags::AllStages;
 }
 
 

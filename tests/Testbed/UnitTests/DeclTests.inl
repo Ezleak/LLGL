@@ -25,6 +25,7 @@ DECL_RITEST( ContainerStringLiteral );
 DECL_RITEST( ContainerStringOperators );
 DECL_RITEST( ParseUtil );
 DECL_RITEST( ImageConversions );
+DECL_RITEST( ImageStrides );
 
 #undef DECL_RITEST
 
@@ -75,6 +76,7 @@ DECL_TEST( BlendStates );
 DECL_TEST( DualSourceBlending );
 DECL_TEST( TriangleStripCutOff );
 DECL_TEST( TextureViews );
+DECL_TEST( TextureStrides );
 DECL_TEST( Uniforms );
 DECL_TEST( ShadowMapping );
 DECL_TEST( ViewportAndScissor );

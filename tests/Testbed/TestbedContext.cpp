@@ -19,9 +19,63 @@
 #include <stb/stb_image_write.h>
 
 
-static constexpr const char* g_defaultOutputDir = "Output/";
+static const char* k_defaultOutputDir       = "Output/";
+static const char* k_knownSingleCharArgs    = "bcdfghpstv";
 
-bool HasProgramArgument(int argc, char* argv[], const char* search, const char** outValue = nullptr);
+// Returns true of the specified list of program arguments contains the search string
+bool HasProgramArgument(int argc, char* argv[], const char* search, const char** outValue)
+{
+    const std::size_t searchLen = ::strlen(search);
+
+    // Search for argument with optional output value
+    for (int i = 1; i < argc; ++i)
+    {
+        if (outValue != nullptr)
+        {
+            if (::strcmp(argv[i], search) == 0)
+            {
+                *outValue = "";
+                return true;
+            }
+            if (::strncmp(argv[i], search, searchLen) == 0 && argv[i][searchLen] == '=')
+            {
+                *outValue = argv[i] + searchLen + 1;
+                return true;
+            }
+        }
+        else
+        {
+            if (::strcmp(argv[i], search) == 0)
+                return true;
+        }
+    }
+
+    // Search for combined single character arguments, e.g. '-cdf'
+    // Only accept known arguments to avoid accepting misspelled long argument names, e.g. '-pedntic' should not be accepted as '-p -d -c'
+    if (searchLen == 2 && search[0] == '-')
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            // Does the current argument contain our search argument, e.g. searching for '-d' in argument '-pdc'
+            if (*argv[i] != '\0' && ::strchr(argv[i] + 1, search[1]) != nullptr)
+            {
+                // Ensure current argument can be accepted as combined argument, i.e. it contains only known single-character arguments
+                for (const char* arg = argv[i] + 1; *arg != '\0'; ++arg)
+                {
+                    if (::strchr(k_knownSingleCharArgs, *arg) == nullptr)
+                        return false;
+                }
+
+                // Accept as combined argument
+                if (outValue != nullptr)
+                    *outValue = "";
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
 
 static std::string FindOutputDir(int argc, char* argv[])
 {
@@ -30,7 +84,7 @@ static std::string FindOutputDir(int argc, char* argv[])
         if (::strncmp(argv[i], "-o=", 3) == 0)
             return argv[i] + 3;
     }
-    return g_defaultOutputDir;
+    return k_defaultOutputDir;
 }
 
 static std::vector<std::string> FindSelectedTests(int argc, char* argv[])
@@ -101,6 +155,8 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
     // Check for debug options
     const char* debugValue              = "";
     const bool  isDebugMode             = (HasProgramArgument(argc, argv, "-d", &debugValue) || HasProgramArgument(argc, argv, "--debug", &debugValue));
+    const bool  isBreakOnError          = (HasProgramArgument(argc, argv, "-b") || HasProgramArgument(argc, argv, "--break"));
+    const bool  isRefMode               = HasProgramArgument(argc, argv, "--ref");
     const bool  isCpuAndGpuDebugMode    = (*debugValue == '\0' || ::strcmp(debugValue, "gpu+cpu") == 0 || ::strcmp(debugValue, "cpu+gpu") == 0);
     const bool  isCpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "cpu") == 0);
     const bool  isGpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "gpu") == 0);
@@ -118,10 +174,13 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
         if (isDebugMode)
         {
             if (isGpuDebugMode)
-                rendererDesc.flags = RenderSystemFlags::DebugDevice;
+                rendererDesc.flags |= RenderSystemFlags::DebugDevice;
             if (isCpuDebugMode)
                 rendererDesc.debugger = &debugger;
         }
+
+        if (isRefMode)
+            rendererDesc.flags |= RenderSystemFlags::SoftwareDevice;
 
         if (preferAMD)
             rendererDesc.flags |= RenderSystemFlags::PreferAMD;
@@ -129,6 +188,9 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             rendererDesc.flags |= RenderSystemFlags::PreferIntel;
         if (preferNVIDIA)
             rendererDesc.flags |= RenderSystemFlags::PreferNVIDIA;
+
+        if (isBreakOnError)
+            rendererDesc.flags |= RenderSystemFlags::DebugBreakOnError;
 
         if (::strcmp(moduleName, "OpenGL") == 0)
         {
@@ -138,7 +200,9 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             rendererDesc.rendererConfigSize = sizeof(cfgGL);
         }
     }
-    if ((renderer = RenderSystem::Load(rendererDesc)) != nullptr)
+
+    Report report;
+    if ((renderer = RenderSystem::Load(rendererDesc, &report)) != nullptr)
     {
         // Create swap chain
         SwapChainDescriptor swapChainDesc;
@@ -176,6 +240,11 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             ++failures;
         CreateSamplerStates();
         LoadDefaultProjectionMatrix();
+    }
+    else
+    {
+        // Log error report
+        Log::Errorf(Log::ColorFlags::StdError, "%s", report.GetText());
     }
 }
 
@@ -344,6 +413,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( CommandBufferSecondary      );
     RUN_TEST( TriangleStripCutOff         );
     RUN_TEST( TextureViews                );
+    RUN_TEST( TextureStrides              );
     RUN_TEST( Uniforms                    );
     RUN_TEST( ShadowMapping               );
     RUN_TEST( ViewportAndScissor          );
@@ -354,7 +424,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( CombinedTexSamplers         );
 
     // Reset main renderer and run C99 tests
-    // LLGL can't run the same render system in multiple instances (confuses the context managemenr in GL backend)
+    // LLGL can't run the same render system in multiple instances (confuses the context management in GL backend)
     renderer.reset();
     RUN_C99_TEST( OffscreenC99 );
 
@@ -400,6 +470,7 @@ unsigned TestbedContext::RunRendererIndependentTests(int argc, char* argv[])
     RUN_TEST( ContainerStringOperators );
     RUN_TEST( ParseUtil );
     RUN_TEST( ImageConversions );
+    RUN_TEST( ImageStrides );
 
     #undef RUN_TEST
 
@@ -910,9 +981,12 @@ bool TestbedContext::LoadShaders()
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.hlsl",         ShaderType::Fragment,        "PScene",  "ps_5_0");
         shaders[VSResourceArrays]   = LoadShaderFromFile("ResourceArrays.hlsl",        ShaderType::Vertex,          "VSMain",  "vs_5_0");
         shaders[PSResourceArrays]   = LoadShaderFromFile("ResourceArrays.hlsl",        ShaderType::Fragment,        "PSMain",  "ps_5_0");
-        shaders[VSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
-        shaders[PSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Fragment,        "PSMain",  "ps_5_0");
-        shaders[CSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Compute,         "CSMain",  "cs_5_0");
+        if ((caps.limits.storageResourceStageFlags & StageFlags::VertexStage) != 0)
+        {
+            shaders[VSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
+            shaders[PSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Fragment,        "PSMain",  "ps_5_0");
+            shaders[CSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Compute,         "CSMain",  "cs_5_0");
+        }
         shaders[VSClear]            = LoadShaderFromFile("ClearScreen.hlsl",           ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
         shaders[PSClear]            = LoadShaderFromFile("ClearScreen.hlsl",           ShaderType::Fragment,        "PSMain",  "ps_5_0");
         shaders[VSStreamOutput]     = LoadShaderFromFile("StreamOutput.hlsl",          ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtColored, VertFmtColoredSO);
@@ -1049,14 +1123,10 @@ void TestbedContext::CreatePipelineLayouts()
 
     layouts[PipelineTextured] = renderer->CreatePipelineLayout(
         Parse(
-            HasCombinedSamplers()
-                ?   "cbuffer(Scene@1):vert:frag,"
-                    "texture(colorMap@2):frag,"
-                    "sampler(2):frag,"
-                :
-                    "cbuffer(Scene@1):vert:frag,"
-                    "texture(colorMap@2):frag,"
-                    "sampler(linearSampler@3):frag,"
+            "cbuffer(Scene@1):vert:frag,"
+            "texture(colorMap@2):frag,"
+            "sampler(linearSampler@3):frag,"
+            "sampler<colorMap, linearSampler>(colorMap@2),"
         )
     );
 }

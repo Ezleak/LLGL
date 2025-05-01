@@ -12,16 +12,36 @@
 #include <LLGL/Export.h>
 
 
+//! Shortcut to throw a runtime error exception.
+#define LLGL_THROW_RUNTIME_ERROR(...) \
+    LLGL::Trap(LLGL::Exception::RuntimeError, __FUNCTION__, __VA_ARGS__)
+
+//! Shortcut to throw an out of range exception.
+#define LLGL_THROW_OUT_OF_RANGE(...) \
+    LLGL::Trap(LLGL::Exception::OutOfRange, __FUNCTION__, __VA_ARGS__)
+
+//! Shortcut to throw a bad cast exception.
+#define LLGL_THROW_BAD_CAST(...) \
+    LLGL::Trap(LLGL::Exception::BadCast, __FUNCTION__, __VA_ARGS__)
+
+//! Shortcut to throw an invalid argument exception.
+#define LLGL_THROW_INVALID_ARGUMENT(...) \
+    LLGL::Trap(LLGL::Exception::InvalidArgument, __FUNCTION__, __VA_ARGS__)
+
 /**
 \brief Helper macro to trap execution when the condition fails.
 \remarks LLGL only throws exceptions if it was built with \c LLGL_ENABLE_EXCEPTIONS.
 \see LLGL::Trap
 */
-#define LLGL_VERIFY(CONDITION, EXCEPTION)                                                           \
+#define LLGL_VERIFY_EXT(EXCEPTION, CONDITION)                                                       \
     if (!(CONDITION))                                                                               \
     {                                                                                               \
         LLGL::Trap(LLGL::Exception::EXCEPTION, __FUNCTION__, "assertion failed: %s", #CONDITION);   \
     }
+
+//! Shortcut for LLGL_VERIFY_EXT(RuntimeError, CONDITION).
+#define LLGL_VERIFY(CONDITION) \
+    LLGL_VERIFY_EXT(RuntimeError, CONDITION)
 
 
 namespace LLGL

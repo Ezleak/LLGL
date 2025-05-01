@@ -63,10 +63,8 @@ public:
         // Check if constant buffers and tessellation shaders are supported
         const auto& renderCaps = renderer->GetRenderingCaps();
 
-        if (!renderCaps.features.hasConstantBuffers)
-            throw std::runtime_error("constant buffers are not supported by this renderer");
-        if (!renderCaps.features.hasTessellatorStage)
-            throw std::runtime_error("tessellation is not supported by this renderer");
+        LLGL_VERIFY(renderCaps.features.hasConstantBuffers);
+        LLGL_VERIFY(renderCaps.features.hasTessellatorStage);
 
         // Limit initial tessellation factor
         maxTessFactor = static_cast<float>(renderCaps.limits.maxTessFactor);
@@ -309,8 +307,10 @@ private:
                     case ViewModes::MixedSolidAndWireframe:
                     {
                         const LLGL::Extent2D halfResolution{ resolution.width/2, resolution.height };
+
                         commands->SetScissor(LLGL::Scissor{ LLGL::Offset2D{}, halfResolution });
                         DrawTessellatedModel(false);
+
                         commands->SetScissor(LLGL::Scissor{ LLGL::Offset2D{ static_cast<std::int32_t>(resolution.width/2), 0 }, halfResolution });
                         DrawTessellatedModel(true);
                     }

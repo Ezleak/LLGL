@@ -27,6 +27,7 @@ class Buffer;
 class VKBuffer;
 class VKTexture;
 class VKDescriptorSetWriter;
+class VKPipelineBarrier;
 struct ResourceHeapDescriptor;
 struct ResourceViewDescriptor;
 struct TextureViewDescriptor;
@@ -52,8 +53,8 @@ class VKResourceHeap final : public ResourceHeap
             const ArrayView<ResourceViewDescriptor>&    resourceViews
         );
 
-        // Inserts a pipeline barrier command into the command buffer if this resource heap requires it.
-        void SubmitPipelineBarrier(VkCommandBuffer commandBuffer, std::uint32_t descriptorSet);
+        // Sets all the barrier slots in the specified pipeline barrier.
+        void SetBarrierSlots(VKPipelineBarrier& barrier, std::uint32_t descriptorSet);
 
         // Returns the native Vulkan descritpor pool.
         inline VkDescriptorPool GetVkDescriptorPool() const
@@ -71,26 +72,43 @@ class VKResourceHeap final : public ResourceHeap
 
         static constexpr std::uint32_t invalidViewIndex = 0xFFFF;
 
-        //TODO: merge with or inherit from VKLayoutBinding
-        struct VKDescriptorBinding
+        // Note that this struct will assign its parent member 'VKLayoutBinding::barrierSlot' a new value that is an index into 'barrierSlots_'.
+        struct VKLayoutHeapBinding : VKLayoutBinding
         {
-            std::uint32_t           dstBinding;
-            std::uint32_t           dstArrayElement;
-            VkDescriptorType        descriptorType;
-            VkPipelineStageFlags    stageFlags;
-            std::uint32_t           imageViewIndex  : 16; // Index (per descriptor set) to the intermediate VkImageView or 0xFFFF if unused.
-            std::uint32_t           bufferViewIndex : 16; // Index (per descriptor set) to the intermediate VkBufferView or 0xFFFF if unused.
+            std::uint32_t imageViewIndex  : 16; // Index (per descriptor set) to the intermediate VkImageView or 0xFFFF if unused.
+            std::uint32_t bufferViewIndex : 16; // Index (per descriptor set) to the intermediate VkBufferView or 0xFFFF if unused.
         };
 
-        struct VKDescriptorBarrierWriter
+        union VKBarrierResource
         {
-            std::uint32_t barrierChangeRanges[2] = {};
+            inline VKBarrierResource() :
+                buffer { VK_NULL_HANDLE }
+            {
+            }
+
+            inline VKBarrierResource(VkBuffer buffer) :
+                buffer { buffer }
+            {
+            }
+
+            #if VK_USE_64_BIT_PTR_DEFINES
+            inline VKBarrierResource(VkImage image) :
+                image { image }
+            {
+            }
+            #endif // /VK_USE_64_BIT_PTR_DEFINES
+
+            VKBarrierResource(const VKBarrierResource&) = default;
+            VKBarrierResource& operator = (VKBarrierResource&&) = default;
+
+            VkBuffer    buffer;
+            VkImage     image;
         };
 
     private:
 
-        void ConvertLayoutBindings(const ArrayView<VKLayoutBinding>& layoutBindings);
-        void ConvertLayoutBinding(VKDescriptorBinding& dst, const VKLayoutBinding& src);
+        void ConvertAllLayoutBindings(const ArrayView<VKLayoutBinding>& layoutBindings);
+        void ConvertLayoutBinding(VKLayoutHeapBinding& dst, const VKLayoutBinding& src);
 
         void CreateDescriptorPool(VkDevice device, std::uint32_t numDescriptorSets);
 
@@ -103,7 +121,7 @@ class VKResourceHeap final : public ResourceHeap
         void FillWriteDescriptorWithSampler(
             const ResourceViewDescriptor&   desc,
             std::uint32_t                   descriptorSet,
-            const VKDescriptorBinding&      binding,
+            const VKLayoutHeapBinding&      binding,
             VKDescriptorSetWriter&          setWriter
         );
 
@@ -111,7 +129,7 @@ class VKResourceHeap final : public ResourceHeap
             VkDevice                        device,
             const ResourceViewDescriptor&   desc,
             std::uint32_t                   descriptorSet,
-            const VKDescriptorBinding&      binding,
+            const VKLayoutHeapBinding&      binding,
             VKDescriptorSetWriter&          setWriter
         );
 
@@ -119,14 +137,9 @@ class VKResourceHeap final : public ResourceHeap
             VkDevice                        device,
             const ResourceViewDescriptor&   desc,
             std::uint32_t                   descriptorSet,
-            const VKDescriptorBinding&      binding,
-            VKDescriptorSetWriter&          setWriter,
-            VKDescriptorBarrierWriter&      barrierWriter
+            const VKLayoutHeapBinding&      binding,
+            VKDescriptorSetWriter&          setWriter
         );
-
-        bool ExchangeBufferBarrier(std::uint32_t descriptorSet, Buffer* resource, const VKDescriptorBinding& binding);
-        bool EmplaceBarrier(std::uint32_t descriptorSet, std::uint32_t slot, Resource* resource, VkPipelineStageFlags stageFlags);
-        bool RemoveBarrier(std::uint32_t descriptorSet, std::uint32_t slot);
 
         // Returns the image view for the specified texture or creates one if the texture-view is enabled.
         VkImageView GetOrCreateImageView(
@@ -136,18 +149,32 @@ class VKResourceHeap final : public ResourceHeap
             std::size_t                     imageViewIndex
         );
 
+        // Returns the buffer view for the specified buffer or creates one if the buffer-view is enabled.
+        VkBufferView GetOrCreateBufferView(
+            VkDevice                        device,
+            VKBuffer&                       bufferVK,
+            const ResourceViewDescriptor&   desc,
+            std::size_t                     bufferViewIndex
+        );
+
+        // Allocates the buffer/image barrier slots for all descriptor sets.
+        void AllocateBarrierSlots(std::uint32_t numDescriptorSets);
+
     private:
 
         VKPtr<VkDescriptorPool>             descriptorPool_;
         std::vector<VkDescriptorSet>        descriptorSets_;
-        SmallVector<VKDescriptorBinding>    bindings_;
+        SmallVector<VKLayoutHeapBinding>    bindings_;
 
         std::vector<VKPtr<VkImageView>>     imageViews_;
-      //std::vector<VKPtr<VkBufferView>>    bufferViews_;
+        std::vector<VKPtr<VkBufferView>>    bufferViews_;
         std::uint32_t                       numImageViewsPerSet_    = 0;
         std::uint32_t                       numBufferViewsPerSet_   = 0;
 
-        std::vector<VKPipelineBarrierPtr>   barriers_;
+        std::uint32_t                       numBufferBarriers_  : 16;
+        std::uint32_t                       numImageBarriers_   : 16;
+        SmallVector<std::uint32_t, 2>       barrierSlots_;
+        std::vector<VKBarrierResource>      barrierResources_;
 
 };
 

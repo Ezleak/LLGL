@@ -18,8 +18,6 @@
 
 using namespace LLGL;
 
-static const char* k_knownSingleCharArgs = "cdfghpstv";
-
 static unsigned RunRendererIndependentTests(int argc, char* argv[])
 {
     Log::Printf("Run renderer independent tests\n");
@@ -35,8 +33,12 @@ static unsigned RunTestbedForRenderer(const char* moduleName, int version, int a
         Log::Printf("Run Testbed: %s (%d)\n", moduleName, version);
     else
         Log::Printf("Run Testbed: %s\n", moduleName);
+
     TestbedContext::PrintSeparator();
     TestbedContext context{ moduleName, version, argc, argv };
+    if (!context.IsValid())
+        return 1;
+
     unsigned failures = context.RunAllTests();
     TestbedContext::PrintSeparator();
     Log::Printf("\n");
@@ -80,61 +82,6 @@ static ModuleAndVersion GetRendererModule(const std::string& name)
     if (std::regex_match(name, std::regex(R"(opengl\d{3})")))
         return ModuleAndVersion{ "OpenGL", std::atoi(name.c_str() + 6) };
     return name.c_str();
-}
-
-// Returns true of the specified list of program arguments contains the search string
-bool HasProgramArgument(int argc, char* argv[], const char* search, const char** outValue = nullptr)
-{
-    const std::size_t searchLen = ::strlen(search);
-
-    // Search for argument with optional output value
-    for (int i = 1; i < argc; ++i)
-    {
-        if (outValue != nullptr)
-        {
-            if (::strcmp(argv[i], search) == 0)
-            {
-                *outValue = "";
-                return true;
-            }
-            if (::strncmp(argv[i], search, searchLen) == 0 && argv[i][searchLen] == '=')
-            {
-                *outValue = argv[i] + searchLen + 1;
-                return true;
-            }
-        }
-        else
-        {
-            if (::strcmp(argv[i], search) == 0)
-                return true;
-        }
-    }
-
-    // Search for combined single character arguments, e.g. '-cdf'
-    // Only accept known arguments to avoid accepting misspelled long argument names, e.g. '-pedntic' should not be accepted as '-p -d -c'
-    if (searchLen == 2 && search[0] == '-')
-    {
-        for (int i = 1; i < argc; ++i)
-        {
-            // Does the current argument contain our search argument, e.g. searching for '-d' in argument '-pdc'
-            if (*argv[i] != '\0' && ::strchr(argv[i] + 1, search[1]) != nullptr)
-            {
-                // Ensure current argument can be accepted as combined argument, i.e. it contains only known single-character arguments
-                for (const char* arg = argv[i] + 1; *arg != '\0'; ++arg)
-                {
-                    if (::strchr(k_knownSingleCharArgs, *arg) == nullptr)
-                        return false;
-                }
-
-                // Accept as combined argument
-                if (outValue != nullptr)
-                    *outValue = "";
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 static void PrintHelpDocs()

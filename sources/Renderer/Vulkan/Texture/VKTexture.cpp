@@ -36,6 +36,7 @@ VKTexture::VKTexture(
     const TextureDescriptor&    desc)
 :
     Texture        { desc.type, desc.bindFlags         },
+    device_        { device                            },
     image_         { device                            },
     imageView_     { device, vkDestroyImageView        },
     format_        { VKTypes::Map(desc.format)         },
@@ -44,6 +45,8 @@ VKTexture::VKTexture(
     /* Create Vulkan image and allocate memory region */
     CreateImage(device, desc);
     image_.AllocateMemoryRegion(deviceMemoryMngr);
+    if (desc.debugName != nullptr)
+        SetDebugName(desc.debugName);
 }
 
 bool VKTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -165,6 +168,13 @@ SubresourceFootprint VKTexture::GetSubresourceFootprint(std::uint32_t mipLevel) 
     return footprint;
 }
 
+void VKTexture::SetDebugName(const char* name)
+{
+    #if VK_EXT_debug_marker
+    VKSetDebugName(device_, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<std::uint64_t>(GetVkImage()), name);
+    #endif
+}
+
 // Maps the TextureSwizzleRGBA::a component to a different value for the "Alpha" swizzle format
 static VkComponentSwizzle GetVkComponentAlphaComponent(const TextureSwizzle swizzleAlpha)
 {
@@ -237,7 +247,7 @@ void VKTexture::CreateImageView(
     VkImageSubresourceRange subresourceRange;
     {
         subresourceRange.aspectMask     = VKImageUtils::GetExclusiveVkImageAspect(viewVkFormat); //TODO: allow stencil-component to be selected
-        subresourceRange.baseMipLevel   = textureViewDesc.subresource.baseMipLevel,
+        subresourceRange.baseMipLevel   = textureViewDesc.subresource.baseMipLevel;
         subresourceRange.levelCount     = textureViewDesc.subresource.numMipLevels;
         subresourceRange.baseArrayLayer = textureViewDesc.subresource.baseArrayLayer;
         subresourceRange.layerCount     = textureViewDesc.subresource.numArrayLayers;
@@ -429,11 +439,11 @@ static VkSampleCountFlagBits GetVkImageSampleCountFlags(const TextureDescriptor&
 
 static VkImageUsageFlags GetVkImageUsageFlags(const TextureDescriptor& desc)
 {
-    VkImageUsageFlags usageFlags = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VkImageUsageFlags usageFlags = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     /* Enable TRANSFER_SRC_BIT image usage when MIP-maps are enabled, CPU read access or copy source binding is requested */
-    if (IsMipMappedTexture(desc) || (desc.cpuAccessFlags & CPUAccessFlags::Read) || (desc.bindFlags & BindFlags::CopySrc) != 0)
-        usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+//  if (IsMipMappedTexture(desc) || (desc.cpuAccessFlags & CPUAccessFlags::Read) || (desc.bindFlags & BindFlags::CopySrc) != 0)
+//      usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     /* Enable either color or depth-stencil ATTACHMENT_BIT image usage when attachment usage is enabled */
     if ((desc.bindFlags & BindFlags::ColorAttachment) != 0)

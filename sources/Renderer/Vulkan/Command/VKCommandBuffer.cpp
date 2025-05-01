@@ -53,6 +53,7 @@ VKCommandBuffer::VKCommandBuffer(
     const VKPhysicalDevice&         physicalDevice,
     VkDevice                        device,
     VkQueue                         commandQueue,
+    VKDeviceMemoryManager&          deviceMemoryMngr,
     const VKQueueFamilyIndices&     queueFamilyIndices,
     const CommandBufferDescriptor&  desc)
 :
@@ -95,6 +96,7 @@ VKCommandBuffer::VKCommandBuffer(
     CreateVkCommandPool(queueFamilyIndices.graphicsFamily);
     CreateVkCommandBuffers();
     CreateVkRecordingFences();
+    CreateStagingBufferPools(deviceMemoryMngr, static_cast<VkDeviceSize>(desc.minStagingPoolSize));
 }
 
 VKCommandBuffer::~VKCommandBuffer()
@@ -192,23 +194,33 @@ void VKCommandBuffer::UpdateBuffer(
     Buffer&         dstBuffer,
     std::uint64_t   dstOffset,
     const void*     data,
-    std::uint16_t   dataSize)
+    std::uint64_t   dataSize)
 {
     auto& dstBufferVK = LLGL_CAST(VKBuffer&, dstBuffer);
 
     const VkDeviceSize size     = static_cast<VkDeviceSize>(dataSize);
     const VkDeviceSize offset   = static_cast<VkDeviceSize>(dstOffset);
 
+    constexpr VkDeviceSize k_limitForCmdUpdateBuffer = (1u << 16);
+
     if (IsInsideRenderPass())
     {
         PauseRenderPass();
-        vkCmdUpdateBuffer(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, size, data);
-        BufferPipelineBarrier(dstBufferVK.GetVkBuffer(), offset, size, VK_ACCESS_TRANSFER_WRITE_BIT, dstBufferVK.GetAccessFlags());
+        {
+            if (size > k_limitForCmdUpdateBuffer)
+                stagingBufferPools_[commandBufferIndex_].WriteStaged(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, data, size);
+            else
+                vkCmdUpdateBuffer(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, size, data);
+            BufferPipelineBarrier(dstBufferVK.GetVkBuffer(), offset, size, VK_ACCESS_TRANSFER_WRITE_BIT, dstBufferVK.GetAccessFlags());
+        }
         ResumeRenderPass();
     }
     else
     {
-        vkCmdUpdateBuffer(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, size, data);
+        if (size > k_limitForCmdUpdateBuffer)
+            stagingBufferPools_[commandBufferIndex_].WriteStaged(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, data, size);
+        else
+            vkCmdUpdateBuffer(commandBuffer_, dstBufferVK.GetVkBuffer(), offset, size, data);
         BufferPipelineBarrier(dstBufferVK.GetVkBuffer(), offset, size, VK_ACCESS_TRANSFER_WRITE_BIT, dstBufferVK.GetAccessFlags());
     }
 }
@@ -265,7 +277,7 @@ void VKCommandBuffer::CopyBufferFromTexture(
     }
 
     //TODO: context must detect if barriers are incompatible
-    context_.BufferMemoryBarrier(dstBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_TRANSFER_WRITE_BIT, true);
+    context_.BufferMemoryBarrier(dstBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT);
     VkImageLayout oldLayout = srcTextureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
 
     if (IsInsideRenderPass())
@@ -372,7 +384,7 @@ void VKCommandBuffer::CopyTextureFromBuffer(
     }
 
     //TODO: context must detect if barriers are incompatible
-    context_.BufferMemoryBarrier(srcBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_TRANSFER_READ_BIT, true);
+    context_.BufferMemoryBarrier(srcBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT);
     VkImageLayout oldLayout = dstTextureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
 
     if (IsInsideRenderPass())
@@ -568,15 +580,35 @@ void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t 
         return /*Descriptor set out of bounds*/;
 
     boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, resourceHeapVK.GetVkDescriptorSets()[descriptorSet]);
-    resourceHeapVK.SubmitPipelineBarrier(commandBuffer_, descriptorSet);
+
+    if (boundPipelineBarrier_ != nullptr)
+        resourceHeapVK.SetBarrierSlots(*boundPipelineBarrier_, descriptorSet);
 }
 
 void VKCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
 {
-    if (boundPipelineLayout_ != nullptr && descriptor < boundPipelineLayout_->GetLayoutDynamicBindings().size())
+    if (boundBindingTable_ == nullptr)
+        return /*No PSO bound*/;
+
+    if (!(descriptor < boundBindingTable_->dynamicBindings.size()))
+        return /*Out of bounds*/;
+
+    const VKLayoutBinding& binding = boundBindingTable_->dynamicBindings[descriptor];
+    descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
+
+    /* Update pipeline barrier slot */
+    if (boundPipelineBarrier_ != nullptr)
     {
-        const VKLayoutBinding& binding = boundPipelineLayout_->GetLayoutDynamicBindings()[descriptor];
-        descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
+        if (resource.GetResourceType() == ResourceType::Buffer)
+        {
+            VKBuffer& bufferVK = LLGL_CAST(VKBuffer&, resource);
+            boundPipelineBarrier_->SetBufferBarrier(binding.barrierSlot, bufferVK.GetVkBuffer());
+        }
+        else if (resource.GetResourceType() == ResourceType::Texture)
+        {
+            VKTexture& textureVK = LLGL_CAST(VKTexture&, resource);
+            boundPipelineBarrier_->SetImageBarrier(binding.barrierSlot, textureVK.GetVkImage());
+        }
     }
 }
 
@@ -586,7 +618,71 @@ void VKCommandBuffer::ResourceBarrier(
     std::uint32_t       numTextures,
     Texture* const *    textures)
 {
-    //TODO
+    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+    SmallVector<VkBufferMemoryBarrier, 32u>  bufferBarriers;
+    SmallVector<VkImageMemoryBarrier, 32u>   imageBarriers;
+
+    /* Preapre buffer barriers for read.write access */
+    bufferBarriers.resize(numBuffers);
+
+    for_range(i, numBuffers)
+    {
+        VkBufferMemoryBarrier& barrier = bufferBarriers[i];
+
+        auto* bufferVK = LLGL_CAST(VKBuffer*, buffers[i]);
+
+        barrier.sType                   = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.pNext                   = nullptr;
+        barrier.srcAccessMask           = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask           = VK_ACCESS_SHADER_READ_BIT;
+        barrier.srcQueueFamilyIndex     = 0;
+        barrier.dstQueueFamilyIndex     = 0;
+        barrier.buffer                  = bufferVK->GetVkBuffer();
+        barrier.offset                  = 0;
+        barrier.size                    = VK_WHOLE_SIZE;
+    }
+
+    /* Prepare image barriers for texture read/write access */
+    imageBarriers.resize(numTextures);
+
+    for_range(i, numTextures)
+    {
+        VkImageMemoryBarrier& barrier = imageBarriers[i];
+
+        auto* textureVK = LLGL_CAST(VKTexture*, textures[i]);
+
+        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext                           = nullptr;
+        barrier.srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout                       = textureVK->GetVkImageLayout();
+        barrier.newLayout                       = textureVK->GetVkImageLayout();
+        barrier.srcQueueFamilyIndex             = 0;
+        barrier.dstQueueFamilyIndex             = 0;
+        barrier.image                           = textureVK->GetVkImage();
+        barrier.subresourceRange.aspectMask     = VKImageUtils::GetInclusiveVkImageAspect(textureVK->GetVkFormat());
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = textureVK->GetNumMipLevels();
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = textureVK->GetNumArrayLayers();
+    }
+
+    /* Encode pipeline barrier command into command buffer */
+    vkCmdPipelineBarrier(
+        commandBuffer_,
+        srcStageMask,
+        dstStageMask,
+        0, // VkDependencyFlags
+        0, // memoryBarrierCount
+        nullptr, // pMemoryBarriers
+        static_cast<std::uint32_t>(bufferBarriers.size()),
+        bufferBarriers.data(),
+        static_cast<std::uint32_t>(imageBarriers.size()),
+        imageBarriers.data()
+    );
 }
 
 /* ----- Render Passes ----- */
@@ -627,6 +723,8 @@ void VKCommandBuffer::BeginRenderPass(
         framebufferRenderArea_.extent   = renderTargetVK.GetVkExtent();
         numColorAttachments_            = renderTargetVK.GetNumColorAttachments();
         hasDepthStencilAttachment_      = (renderTargetVK.HasDepthAttachment() || renderTargetVK.HasStencilAttachment());
+
+        renderTargetVK.OverrideImageLayoutsForRenderPass();
     }
 
     hasDynamicScissorRect_ = false;
@@ -819,13 +917,10 @@ void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
     }
 
     /* Keep reference to bound piepline layout (can be null) */
-    boundPipelineState_     = &pipelineStateVK;
-    boundPipelineLayout_    = pipelineStateVK.GetPipelineLayout();
+    boundPipelineState_ = &pipelineStateVK;
 
-    /* Reset descriptor cache for dynamic resources */
-    if (boundPipelineLayout_ != nullptr)
+    if (pipelineStateVK.GetBindingTableAndDescriptorCache(boundBindingTable_, descriptorCache_))
     {
-        descriptorCache_ = boundPipelineLayout_->GetDescriptorCache();
         if (descriptorCache_ != nullptr)
         {
             descriptorCache_->Reset();
@@ -834,6 +929,12 @@ void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
     }
     else
         descriptorCache_ = nullptr;
+
+    /* Bind automatic pipeline barrier */
+    if (const VKPipelineLayout* pipelineLayoutVK = pipelineStateVK.GetPipelineLayout())
+        boundPipelineBarrier_ = pipelineLayoutVK->GetAutoPipelineBarrier();
+    else
+        boundPipelineBarrier_ = nullptr;
 }
 
 void VKCommandBuffer::SetBlendFactor(const float color[4])
@@ -994,54 +1095,63 @@ void VKCommandBuffer::EndStreamOutput()
 void VKCommandBuffer::Draw(std::uint32_t numVertices, std::uint32_t firstVertex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, 1, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
@@ -1049,6 +1159,7 @@ void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1068,6 +1179,7 @@ void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::ui
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndexedIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
@@ -1075,6 +1187,7 @@ void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1095,6 +1208,7 @@ void VKCommandBuffer::DrawStreamOutput()
 {
     LLGL_ASSERT_VK_EXT(EXT_transform_feedback);
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndirectByteCountEXT(commandBuffer_, 1, 0, iaState_.ia0XfbCounterBuffer, iaState_.ia0XfbCounterBufferOffset, 0, iaState_.ia0VertexStride);
 }
 
@@ -1103,12 +1217,14 @@ void VKCommandBuffer::DrawStreamOutput()
 void VKCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint32_t numWorkGroupsY, std::uint32_t numWorkGroupsZ)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDispatch(commandBuffer_, numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ);
 }
 
 void VKCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDispatchIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset);
 }
@@ -1207,6 +1323,16 @@ void VKCommandBuffer::CreateVkRecordingFences()
         VkResult result = vkCreateFence(device_, &createInfo, nullptr, recordingFenceArray_[i].ReleaseAndGetAddressOf());
         VKThrowIfFailed(result, "failed to create Vulkan fence");
     }
+}
+
+void VKCommandBuffer::CreateStagingBufferPools(VKDeviceMemoryManager& deviceMemoryMngr, VkDeviceSize minStagingPoolSize)
+{
+    /* Create command allocators and descriptor heap pools */
+    constexpr VkDeviceSize minStagingChunkSize = 256;
+    minStagingPoolSize = std::max(minStagingChunkSize, minStagingPoolSize);
+
+    for_range(i, numCommandBuffers_)
+        stagingBufferPools_[i].InitializeDevice(&deviceMemoryMngr, minStagingPoolSize);
 }
 
 void VKCommandBuffer::ClearFramebufferAttachments(std::uint32_t numAttachments, const VkClearAttachment* attachments)
@@ -1340,6 +1466,12 @@ void VKCommandBuffer::FlushDescriptorCache()
     }
 }
 
+void VKCommandBuffer::SubmitAutoPipelineBarrier()
+{
+    if (boundPipelineBarrier_ != nullptr)
+        boundPipelineBarrier_->Submit(commandBuffer_);
+}
+
 void VKCommandBuffer::AcquireNextBuffer()
 {
     /* Move to next command buffer index */
@@ -1359,13 +1491,16 @@ void VKCommandBuffer::AcquireNextBuffer()
     descriptorSetPool_  = &(descriptorSetPoolArray_[commandBufferIndex_]);
     descriptorSetPool_->Reset();
     context_.Reset(commandBuffer_);
+
+    stagingBufferPools_[commandBufferIndex_].Reset();
 }
 
 void VKCommandBuffer::ResetBindingStates()
 {
     boundSwapChain_         = nullptr;
-    boundPipelineLayout_    = nullptr;
+    boundBindingTable_      = nullptr;
     boundPipelineState_     = nullptr;
+    boundPipelineBarrier_   = nullptr;
     descriptorCache_        = nullptr;
 }
 
